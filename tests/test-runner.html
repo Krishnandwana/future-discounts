@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Purchase Intent Classifier - Test Runner</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2rem;
+        }
+        
+        .controls {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .btn {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .btn:hover {
+            background-color: #45a049;
+        }
+        
+        .btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        .debug-toggle {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .results {
+            padding: 20px;
+        }
+        
+        .test-output {
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .stat-card.passed {
+            border-left-color: #28a745;
+        }
+        
+        .stat-card.failed {
+            border-left-color: #dc3545;
+        }
+        
+        .stat-card.total {
+            border-left-color: #6f42c1;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 0;
+        }
+        
+        .stat-label {
+            margin: 5px 0 0 0;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        .demo-section {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .demo-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .demo-btn {
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        
+        .demo-btn:hover {
+            background-color: #138496;
+        }
+        
+        .classifier-state {
+            background-color: white;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        
+        .state-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+        }
+        
+        .state-item {
+            padding: 8px;
+            background-color: #f8f9fa;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        
+        .state-label {
+            font-weight: bold;
+            color: #495057;
+        }
+        
+        .state-value {
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 Purchase Intent Classifier Test Suite</h1>
+            <p>Comprehensive testing and debugging for behavioral analytics</p>
+        </div>
+        
+        <div class="controls">
+            <button id="runTests" class="btn">Run All Tests</button>
+            <button id="runSingleTest" class="btn">Run Single Test</button>
+            <div class="debug-toggle">
+                <label for="debugMode">Debug Mode:</label>
+                <input type="checkbox" id="debugMode" checked>
+            </div>
+        </div>
+        
+        <div class="results">
+            <div class="stats">
+                <div class="stat-card total">
+                    <div class="stat-number" id="totalTests">0</div>
+                    <div class="stat-label">Total Tests</div>
+                </div>
+                <div class="stat-card passed">
+                    <div class="stat-number" id="passedTests">0</div>
+                    <div class="stat-label">Passed</div>
+                </div>
+                <div class="stat-card failed">
+                    <div class="stat-number" id="failedTests">0</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="passRate">0%</div>
+                    <div class="stat-label">Pass Rate</div>
+                </div>
+            </div>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            
+            <div class="test-output" id="testOutput">Ready to run tests...</div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>🎮 Interactive Classifier Demo</h3>
+            <div class="demo-controls">
+                <button class="demo-btn" onclick="simulateEvent('page_view', 5)">Page View (+5)</button>
+                <button class="demo-btn" onclick="simulateEvent('price_consideration', 20)">Price Check (+20)</button>
+                <button class="demo-btn" onclick="simulateEvent('variant_selected', 10)">Variant Select (+10)</button>
+                <button class="demo-btn" onclick="simulateEvent('add_to_cart', 30)">Add to Cart (+30)</button>
+                <button class="demo-btn" onclick="simulateCartAbandonment()">Cart Abandon</button>
+                <button class="demo-btn" onclick="resetClassifier()">Reset</button>
+                <button class="demo-btn" onclick="runClassificationDemo()">Auto Demo</button>
+                <button class="demo-btn" onclick="getDebugReport()">Debug Report</button>
+            </div>
+            
+            <div class="classifier-state" id="classifierState">
+                <strong>Classifier State:</strong> Ready
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Include the test runner logic inline
+        class SimpleTestFramework {
+            constructor() {
+                this.tests = [];
+                this.suites = [];
+                this.results = { passed: 0, failed: 0, total: 0, errors: [] };
+                this.output = document.getElementById('testOutput');
+            }
+            
+            log(message, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString();
+                const prefix = {
+                    'info': '📝',
+                    'success': '✅',
+                    'error': '❌',
+                    'warning': '⚠️',
+                    'suite': '📦'
+                }[type] || '📝';
+                
+                this.output.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+                this.output.scrollTop = this.output.scrollHeight;
+            }
+            
+            describe(suiteName, suiteFunc) {
+                const suite = { name: suiteName, tests: [], beforeEach: null, afterEach: null };
+                const originalTests = this.tests;
+                this.tests = suite.tests;
+                
+                window.beforeEach = (func) => { suite.beforeEach = func; };
+                window.afterEach = (func) => { suite.afterEach = func; };
+                window.test = this.test.bind(this);
+                window.expect = this.expect.bind(this);
+                
+                try {
+                    suiteFunc();
+                    this.suites.push(suite);
+                } catch (error) {
+                    this.results.errors.push(`Suite "${suiteName}" failed: ${error.message}`);
+                }
+                
+                this.tests = originalTests;
+            }
+            
+            test(testName, testFunc) {
+                this.tests.push({ name: testName, func: testFunc });
+            }
+            
+            expect(actual) {
+                return {
+                    toBe: (expected) => {
+                        if (actual !== expected) {
+                            throw new Error(`Expected ${actual} to be ${expected}`);
+                        }
+                    },
+                    toEqual: (expected) => {
+                        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+                            throw new Error(`Expected ${JSON.stringify(actual)} to equal ${JSON.stringify(expected)}`);
+                        }
+                    },
+                    toBeGreaterThan: (expected) => {
+                        if (actual <= expected) {
+                            throw new Error(`Expected ${actual} to be greater than ${expected}`);
+                        }
+                    },
+                    toBeLessThan: (expected) => {
+                        if (actual >= expected) {
+                            throw new Error(`Expected ${actual} to be less than ${expected}`);
+                        }
+                    },
+                    toHaveLength: (expected) => {
+                        if (!actual || actual.length !== expected) {
+                            throw new Error(`Expected length ${expected}, got ${actual?.length || 'undefined'}`);
+                        }
+                    },
+                    toContain: (expected) => {
+                        if (!actual || !actual.includes(expected)) {
+                            throw new Error(`Expected ${JSON.stringify(actual)} to contain ${expected}`);
+                        }
+                    }
+                };
+            }
+            
+            async run() {
+                this.output.textContent = '';
+                this.results = { passed: 0, failed: 0, total: 0, errors: [] };
+                
+                this.log('Starting Purchase Intent Classifier Tests...', 'info');
+                
+                for (const suite of this.suites) {
+                    this.log(`Suite: ${suite.name}`, 'suite');
+                    
+                    for (const test of suite.tests) {
+                        this.results.total++;
+                        this.updateStats();
+                        
+                        try {
+                            if (suite.beforeEach) suite.beforeEach();
+                            await test.func();
+                            if (suite.afterEach) suite.afterEach();
+                            
+                            this.results.passed++;
+                            this.log(`${test.name}`, 'success');
+                        } catch (error) {
+                            this.results.failed++;
+                            this.results.errors.push(`${suite.name} > ${test.name}: ${error.message}`);
+                            this.log(`${test.name}: ${error.message}`, 'error');
+                        }
+                        
+                        this.updateStats();
+                    }
+                }
+                
+                this.log('\n📊 Test Results Summary:', 'info');
+                this.log(`Total: ${this.results.total}`, 'info');
+                this.log(`Passed: ${this.results.passed}`, 'success');
+                this.log(`Failed: ${this.results.failed}`, 'error');
+                
+                const passRate = (this.results.passed / this.results.total * 100).toFixed(1);
+                this.log(`Pass Rate: ${passRate}%`, 'info');
+                
+                if (this.results.failed === 0) {
+                    this.log('🎉 All tests passed!', 'success');
+                }
+            }
+            
+            updateStats() {
+                document.getElementById('totalTests').textContent = this.results.total;
+                document.getElementById('passedTests').textContent = this.results.passed;
+                document.getElementById('failedTests').textContent = this.results.failed;
+                
+                const passRate = this.results.total > 0 ? 
+                    (this.results.passed / this.results.total * 100).toFixed(1) : 0;
+                document.getElementById('passRate').textContent = `${passRate}%`;
+                document.getElementById('progressFill').style.width = `${passRate}%`;
+            }
+        }
+        
+        // Simplified Purchase Intent Classifier for browser testing
+        class BrowserPurchaseIntentClassifier {
+            constructor(config = {}) {
+                this.debugMode = config.debug || false;
+                this.config = {
+                    interventionThresholds: {willing:0.65, hesitating:0.4, notWilling:0.7},
+                    weights: {
+                        willing: [0.45, 0.35, -0.2, 0.15, 0.3, 0.4, 0.25],
+                        hesitating: [0.3, 0.4, 0.5, 0.3, 0.25, 0.35, -0.1],
+                        notWilling: [-0.6, -0.5, -0.3, -0.4, -0.35, -0.45, -0.2]
+                    },
+                    biases: {willing:1.2, hesitating:0.7, notWilling:-1.0},
+                    intentMultiplier: 10,
+                    ...config
+                };
+                
+                this.state = {
+                    behavioralMetrics: {
+                        cart: {visits:[], abandonments:0, totalTime:0},
+                        product: {views:{}, comparisons:0, variantChanges:0},
+                        temporal: {hesitationPeriods:[], decisionTime:0, inactivePeriods:[]},
+                        navigation: {scrollDepth:0, exitIntent:false, pageChanges:0}
+                    },
+                    sessionStart: Date.now(),
+                    debugEvents: []
+                };
+                
+                this.intentScore = 0;
+                this.events = new Set();
+                this.cartAbandoned = false;
+            }
+            
+            incrementScore(eventType, points) {
+                const basePoints = points * this.config.intentMultiplier;
+                const finalPoints = this.cartAbandoned ? basePoints * 1.5 : basePoints;
+                this.intentScore += finalPoints;
+                this.events.add(eventType);
+                
+                if (this.debugMode) {
+                    console.log(`Score increment: ${eventType}, +${finalPoints}, Total: ${this.intentScore}`);
+                }
+            }
+            
+            normalizeFeatures() {
+                return {
+                    cartVisits: Math.min(this.state.behavioralMetrics.cart.visits.length / 5, 1),
+                    priceComparisons: Math.min(this.state.behavioralMetrics.product.comparisons / 3, 1),
+                    hesitationTime: 0,
+                    variantChanges: Math.min(this.state.behavioralMetrics.product.variantChanges / 2, 1),
+                    scrollDepth: this.state.behavioralMetrics.navigation.scrollDepth / 100,
+                    sessionDuration: Math.min((Date.now() - this.state.sessionStart) / 600000, 1),
+                    returnRate: 0
+                };
+            }
+            
+            calculatePurchaseProbabilities() {
+                const features = this.normalizeFeatures();
+                const scores = {};
+                
+                for (const [cls, weights] of Object.entries(this.config.weights)) {
+                    scores[cls] = weights.reduce((acc, w, i) => 
+                        acc + w * Object.values(features)[i], this.config.biases[cls]);
+                }
+                
+                const expSum = Object.values(scores).reduce((sum, s) => sum + Math.exp(s), 0);
+                const probabilities = {};
+                
+                for (const [cls, score] of Object.entries(scores)) {
+                    probabilities[cls] = Math.exp(score) / expSum;
+                }
+                
+                return probabilities;
+            }
+            
+            determineIntervention() {
+                const probs = this.calculatePurchaseProbabilities();
+                const thresholds = this.config.interventionThresholds;
+                
+                if (probs.willing >= thresholds.willing) return 'conversion';
+                if (probs.hesitating >= thresholds.hesitating) return 'hesitation';
+                if (probs.notWilling >= thresholds.notWilling) return 'reengagement';
+                return 'observe';
+            }
+            
+            getState() {
+                return {
+                    intentScore: this.intentScore,
+                    events: Array.from(this.events),
+                    cartAbandoned: this.cartAbandoned,
+                    probabilities: this.calculatePurchaseProbabilities(),
+                    intervention: this.determineIntervention()
+                };
+            }
+            
+            reset() {
+                this.intentScore = 0;
+                this.events.clear();
+                this.cartAbandoned = false;
+                this.state.sessionStart = Date.now();
+            }
+        }
+        
+        // Global classifier instance for demo
+        let demoClassifier = new BrowserPurchaseIntentClassifier({debug: true});
+        
+        // Test definitions
+        const setupTests = (framework) => {
+            framework.describe('Purchase Intent Classifier - Browser Tests', () => {
+                let classifier;
+                
+                window.beforeEach(() => {
+                    classifier = new BrowserPurchaseIntentClassifier({debug: false});
+                });
+                
+                window.test('should initialize correctly', () => {
+                    window.expect(classifier.intentScore).toBe(0);
+                    window.expect(classifier.events.size).toBe(0);
+                });
+                
+                window.test('should increment score correctly', () => {
+                    classifier.incrementScore('add_to_cart', 30);
+                    window.expect(classifier.intentScore).toBe(300);
+                });
+                
+                window.test('should calculate probabilities', () => {
+                    const probs = classifier.calculatePurchaseProbabilities();
+                    const sum = probs.willing + probs.hesitating + probs.notWilling;
+                    window.expect(Math.abs(sum - 1)).toBeLessThan(0.001);
+                });
+                
+                window.test('should determine intervention', () => {
+                    const intervention = classifier.determineIntervention();
+                    window.expect(['conversion', 'hesitation', 'reengagement', 'observe']).toContain(intervention);
+                });
+            });
+            
+            framework.describe('Debug and State Management', () => {
+                window.test('should track events correctly', () => {
+                    const classifier = new BrowserPurchaseIntentClassifier();
+                    classifier.incrementScore('test_event', 10);
+                    classifier.incrementScore('another_event', 5);
+                    
+                    const state = classifier.getState();
+                    window.expect(state.events).toHaveLength(2);
+                    window.expect(state.intentScore).toBe(150);
+                });
+                
+                window.test('should reset state correctly', () => {
+                    const classifier = new BrowserPurchaseIntentClassifier();
+                    classifier.incrementScore('test', 10);
+                    classifier.reset();
+                    
+                    window.expect(classifier.intentScore).toBe(0);
+                    window.expect(classifier.events.size).toBe(0);
+                });
+            });
+        };
+        
+        // Event handlers
+        document.getElementById('runTests').addEventListener('click', async () => {
+            const framework = new SimpleTestFramework();
+            setupTests(framework);
+            await framework.run();
+        });
+        
+        document.getElementById('runSingleTest').addEventListener('click', async () => {
+            const framework = new SimpleTestFramework();
+            framework.describe('Single Test Example', () => {
+                window.test('classifier basic functionality', () => {
+                    const classifier = new BrowserPurchaseIntentClassifier();
+                    classifier.incrementScore('test', 25);
+                    window.expect(classifier.intentScore).toBe(250);
+                });
+            });
+            await framework.run();
+        });
+        
+        // Demo functions
+        function simulateEvent(eventType, points) {
+            demoClassifier.incrementScore(eventType, points);
+            updateClassifierDisplay();
+        }
+        
+        function simulateCartAbandonment() {
+            demoClassifier.cartAbandoned = true;
+            updateClassifierDisplay();
+        }
+        
+        function resetClassifier() {
+            demoClassifier.reset();
+            updateClassifierDisplay();
+        }
+        
+        function runClassificationDemo() {
+            const events = [
+                ['page_view', 5],
+                ['price_consideration', 20],
+                ['variant_selected', 10],
+                ['add_to_cart', 30]
+            ];
+            
+            let i = 0;
+            const interval = setInterval(() => {
+                if (i < events.length) {
+                    simulateEvent(events[i][0], events[i][1]);
+                    i++;
+                } else {
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+        
+        function getDebugReport() {
+            const state = demoClassifier.getState();
+            console.log('🐛 Debug Report:', state);
+            alert('Debug report logged to console');
+        }
+        
+        function updateClassifierDisplay() {
+            const state = demoClassifier.getState();
+            const probs = state.probabilities;
+            
+            const html = `
+                <div class="state-grid">
+                    <div class="state-item">
+                        <div class="state-label">Intent Score:</div>
+                        <div class="state-value">${state.intentScore}</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Events:</div>
+                        <div class="state-value">${state.events.length}</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Cart Abandoned:</div>
+                        <div class="state-value">${state.cartAbandoned ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Willing:</div>
+                        <div class="state-value">${(probs.willing * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Hesitating:</div>
+                        <div class="state-value">${(probs.hesitating * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Not Willing:</div>
+                        <div class="state-value">${(probs.notWilling * 100).toFixed(1)}%</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Intervention:</div>
+                        <div class="state-value">${state.intervention}</div>
+                    </div>
+                    <div class="state-item">
+                        <div class="state-label">Recent Events:</div>
+                        <div class="state-value">${state.events.slice(-3).join(', ')}</div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('classifierState').innerHTML = '<strong>Classifier State:</strong>' + html;
+        }
+        
+        // Initialize display
+        updateClassifierDisplay();
+    </script>
+</body>
+</html>

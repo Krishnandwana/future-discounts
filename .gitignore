@@ -1,0 +1,8 @@
+node_modules/
+backend/
+build/
+.shopify/
+.claude/
+coverage/
+*.md
+.cursor/ 

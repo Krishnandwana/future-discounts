@@ -1,0 +1,205 @@
+{% comment %}
+Convert Boost - API Functions Component
+Handles all API communications for discount creation and management
+{% endcomment %}
+
+// API functions
+function triggerSilentDiscount(params) {
+  // Silent discount creation
+  
+  fetch('https://convert-boost.vercel.app/api/create-silent-discount', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: params.toString(),
+  })
+  .then(response => {
+    // Check if response is ok, but also try to get the discount code from error
+    if (!response.ok) {
+      console.warn('Silent discount API returned error, but discount may have been created in Shopify');
+    }
+    return response.json();
+  })
+  .then(data => {
+    // Try to extract discount code from the response or error
+    let extractedCode = null;
+    
+    if (data.success && data.discountCode) {
+      // Success case - use the returned code
+      extractedCode = data.discountCode;
+    } else if (data.error && data.error.includes('DISCOUNT-')) {
+      // Error case but discount was created - extract code from error message
+      const codeMatch = data.error.match(/DISCOUNT-[A-Z0-9]+/);
+      if (codeMatch) {
+        extractedCode = codeMatch[0];
+        console.log('Extracted discount code from error response:', extractedCode);
+      }
+    }
+    
+    if (extractedCode) {
+      discountCode = extractedCode;
+      localStorage.setItem('discountCode', discountCode);
+      localStorage.setItem('popupId', currentFormData.id);
+      localStorage.setItem('discountApplied', 'true');
+      
+      // Store sticky bar configuration if enabled for silent discount
+      if (currentFormData.stickyDiscountBar === 'yes') {
+        const stickyConfig = {
+          discountCode: discountCode,
+          popupId: currentFormData.id,
+          stickyDiscountBarBackground: currentFormData.stickyDiscountBarBackground,
+          stickyDiscountBarText: currentFormData.stickyDiscountBarText,
+          fontFamily: currentFormData.fontFamily,
+          bodySize: currentFormData.bodySize,
+          buttonSize: currentFormData.buttonSize,
+          consentColor: currentFormData.consentColor,
+          inputColor: currentFormData.inputColor,
+          textColor: currentFormData.textColor
+        };
+        localStorage.setItem('stickyBarConfig', JSON.stringify(stickyConfig));
+      }
+      
+      // Mark as dismissed since it's a silent discount
+      const dismissalKey = `popup_dismissal_cb_${currentFormData.id}`;
+      localStorage.setItem(dismissalKey, 'true');
+      
+      // Don't set popup dismissal - silent discounts don't show popups
+      // Auto-apply discount and redirect to checkout
+      window.location.href = '/checkout?discount=' + extractedCode;
+    } else {
+      console.error("Failed to create or extract silent discount code", data.error);
+      // Fallback - still redirect but without code
+      window.location.href = '/';
+    }
+  })
+  .catch(err => {
+    console.error("Silent discount API request failed", err.message);
+  });
+}
+
+function triggerDiscountAPI(params) {
+  const apiLogger = {
+    info: (msg, data) => console.log(`[API] ${msg}`, data || ''),
+    debug: (msg, data) => console.log(`[API] ${msg}`, data || ''),
+    error: (msg, data) => console.error(`[API] ${msg}`, data || '')
+  };
+  const btn = document.getElementById('primaryButton');
+
+  if (!btn) {
+    console.error("Primary button not found");
+    return;
+  }
+
+  // Get current discount code from localStorage
+  const existingDiscountCode = localStorage.getItem('discountCode');
+  const existingSavedPopupId = localStorage.getItem('popupId');
+
+  // If discount code exists for this popup, show success popup
+  if (existingDiscountCode && existingSavedPopupId && existingSavedPopupId === currentFormData.id) {
+    return renderSuccessPopup(currentFormData, existingDiscountCode);
+  }
+  
+  // Update button state with loading animation
+  const originalText = btn.textContent;
+  btn.classList.add('loading');
+  btn.textContent = 'Generating discount code...';
+  btn.disabled = true;
+  
+  // For manual discounts, use the predefined code
+  if (currentFormData.discountType === 'manual' && currentFormData.couponCode) {
+    discountCode = currentFormData.couponCode;
+    localStorage.setItem('discountCode', discountCode);
+    localStorage.setItem('popupId', currentFormData.id);
+    // Don't set popupDismissed - let user explicitly close it
+    
+    // Store sticky bar configuration if enabled
+    if (currentFormData.stickyDiscountBar === 'yes') {
+      const stickyConfig = {
+        discountCode: discountCode,
+        popupId: currentFormData.id,
+        stickyDiscountBarBackground: currentFormData.stickyDiscountBarBackground,
+        stickyDiscountBarText: currentFormData.stickyDiscountBarText,
+        fontFamily: currentFormData.fontFamily,
+        bodySize: currentFormData.bodySize,
+        buttonSize: currentFormData.buttonSize,
+        consentColor: currentFormData.consentColor,
+        inputColor: currentFormData.inputColor,
+        textColor: currentFormData.textColor
+      };
+      localStorage.setItem('stickyBarConfig', JSON.stringify(stickyConfig));
+    }
+    
+    // Track manual discount conversion
+    trackConversion(currentFormData, {
+      discountCode: discountCode,
+      discountType: 'manual'
+    });
+    
+    // Dismiss popup after successful discount claim
+    const dismissalKey = `popup_dismissal_cb_${currentFormData.id}`;
+    localStorage.setItem(dismissalKey, 'true');
+    // console.log("Popup dismissed after discount claim - will NEVER show again", { popupId: currentFormData.id });
+    
+    return renderSuccessPopup(currentFormData, discountCode);
+  }
+  
+  // For other discount types, call the API
+  fetch('https://convert-boost.vercel.app/api/create-discount', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: params.toString()
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      discountCode = data.discountCode;
+      localStorage.setItem('discountCode', discountCode);
+      localStorage.setItem('popupId', currentFormData.id);
+      // Don't set popupDismissed - let user explicitly close it
+      
+      // Store sticky bar configuration if enabled
+      if (currentFormData.stickyDiscountBar === 'yes') {
+        const stickyConfig = {
+          discountCode: discountCode,
+          popupId: currentFormData.id,
+          stickyDiscountBarBackground: currentFormData.stickyDiscountBarBackground,
+          stickyDiscountBarText: currentFormData.stickyDiscountBarText,
+          fontFamily: currentFormData.fontFamily,
+          bodySize: currentFormData.bodySize,
+          buttonSize: currentFormData.buttonSize,
+          consentColor: currentFormData.consentColor,
+          inputColor: currentFormData.inputColor,
+          textColor: currentFormData.textColor
+        };
+        localStorage.setItem('stickyBarConfig', JSON.stringify(stickyConfig));
+      }
+      
+      // Track successful conversion
+      trackConversion(currentFormData, {
+        discountCode: discountCode,
+        discountType: currentFormData.discountType
+      });
+      
+      // Dismiss popup after successful discount claim
+      const dismissalKey = `popup_dismissal_cb_${currentFormData.id}`;
+      localStorage.setItem(dismissalKey, 'true');
+      // console.log("Popup dismissed after discount claim - will NEVER show again", { popupId: currentFormData.id });
+      
+      if (currentFormData.discountType === 'silent') {
+        return window.location.href = currentFormData.redirectUrl || '/';
+      }
+      
+      renderSuccessPopup(currentFormData, discountCode);
+    } else {
+      console.error("Failed to create discount", data.error);
+      btn.classList.remove('loading');
+      btn.textContent = 'Claim Discount Now';
+      btn.disabled = false;
+    }
+  })
+  .catch(err => {
+    console.error("Discount API request failed", err.message);
+    btn.classList.remove('loading');
+    btn.textContent = 'Claim Discount Now';
+    btn.disabled = false;
+  });
+}

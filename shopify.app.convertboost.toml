@@ -1,0 +1,27 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "93a0a3be9dc144a285145a67ad514a1e"
+name = "Geo Deals Location Discounts"
+application_url = "https://convert-boost.vercel.app/"
+embedded = true
+handle = "convertboost"
+
+[webhooks]
+api_version = "2025-04"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_all_orders,read_customers,read_orders,read_products,read_themes,write_discounts"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://convert-boost.vercel.app/auth/callback",
+  "https://convert-boost.vercel.app/auth/shopify/callback",
+  "https://convert-boost.vercel.app/api/auth/callback"
+]

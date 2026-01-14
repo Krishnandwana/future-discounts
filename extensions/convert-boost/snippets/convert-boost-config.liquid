@@ -1,0 +1,7 @@
+{% comment %}
+Convert Boost - Configuration Component
+Sets up shop configuration and global variables
+{% endcomment %}
+
+<!-- Inject dynamic config via Liquid -->
+<script>window.shopConfig={shopName:"{{ shop.permanent_domain | default: shop.myshopify_domain }}"};</script>

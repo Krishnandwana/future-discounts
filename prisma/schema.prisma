@@ -1,0 +1,259 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("CONVERTBOOST_DATABASE_URL")
+  directUrl = env("CONVERTBOOST_DATABASE_DIRECT_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String    @unique
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  @@index([shop])
+}
+
+model PopupConfiguration {
+  id                           String             @id @default(uuid())
+  shopName                     String
+  discountName                 String?            @default("Sales Spot on Discount")
+  couponCode                   String?
+  subheading                   String?
+  discountType                 String?            @default("automatic")
+  valueType                    String?            @default("percentage")
+  discountValue                Float?             @default(10)
+  expirationDate               Boolean?           @default(false)
+  discountLocation             String?            @default("exclude")
+  selectedCountry              String?            @default("India")
+  selectedCountries            String[]           @default([])
+  selectedCity                 String[]           @default([])
+  selectedState                String[]           @default([])
+  cityOptions                  Json?
+  stateOptions                 Json?
+  locationType                 String?            @default("city")
+  locationRules                String?            @default("certainCountries")
+  stickyDiscountBar            String?            @default("yes")
+  sidebarWidget                String?            @default("no")
+  trigger                      String?            @default("scroll")
+  scrollPercentage             String?            @default("50")
+  time                         String?            @default("3")
+  devices                      String[]           @default(["all"])
+  limitFrequency               Boolean?           @default(true)
+  popupFrequency               Int?               @default(3)
+  popupPeriod                  String?            @default("day")
+  pageRules                    String?            @default("everyPage")
+  subPageRules                 String?            @default("homepage")
+  scheduleRules                String?            @default("showAllTime")
+  everydaystartTime            String?            @default("00:00")
+  everydayendTime              String?            @default("23:59")
+  endDate                      DateTime?
+  endTime                      String?            @default("23:59")
+  askForEmail                  Boolean?           @default(true)
+  startImmediately             Boolean?           @default(true)
+  startDate                    DateTime?
+  startTime                    String?
+  mobileDevices                String?            @default("all")
+  minPurchaseValue             Float?             @default(0)
+  purchaseType                 String?            @default("both")
+  maxUsesType                  String?            @default("total")
+  maxTotalUses                 Int?               @default(100)
+  combineWithProductDiscounts  Boolean?           @default(false)
+  combineWithOrderDiscounts    Boolean?           @default(false)
+  combineWithShippingDiscounts Boolean?           @default(false)
+  heading                      String?            @default("Get any product for just 798!")
+  description                  String?            @default("Monsoon Sale end soon")
+  fields                       Json?              @default("[{\"type\": \"email\", \"label\": \"Email\", \"checked\": true}]")
+  primaryButton                Boolean?           @default(true)
+  primaryButtonText            String?            @default("Claim Discount Now")
+  secondaryButton              Boolean?           @default(true)
+  secondaryButtonText          String?            @default("No Thanks")
+  footerText                   String?            @default("You are signing up to receive communication via email and can unsubscribe at any time.")
+  sucessStatusHeading          String?            @default("Discount Unlocked 🎉")
+  successDescription           String?            @default("Thanks for subscribing. Copy your discount code and apply to your next order.")
+  clickAction                  String?            @default("closeForm")
+  buttonText                   String?            @default("Shop Now")
+  stickyBarDescription         String?            @default("Don't forget to use your discount code")
+  sidebarButtonText            String?            @default("Get 25% OFF")
+  redirectUrl                  String?
+  intentMultiplier             Int?               @default(5)
+  template                     String?            @default("custom")
+  logo                         String?
+  alignment                    String?            @default("center")
+  cornerRadius                 String?            @default("standard")
+  imagePosition                String?            @default("background")
+  imageWidth                   Int?               @default(20)
+  backgroundImage              String?
+  backgroundColor              String?            @default("#F4F6F8")
+  textColor                    String?            @default("#202223")
+  headingColor                 String?            @default("#202223")
+  descriptionColor             String?            @default("#6D7175")
+  inputColor                   String?            @default("#FFFFFF")
+  consentColor                 String?            @default("#202223")
+  errorColor                   String?            @default("#D82C0D")
+  footerTextColor              String?            @default("#42474C")
+  primaryButtonBackground      String?            @default("#008060")
+  primaryButtonTextColor       String?            @default("#FFFFFF")
+  secondaryButtonBackground    String?            @default("#FFFFFF")
+  secondaryButtonTextColor     String?            @default("#008060")
+  stickyDiscountBarBackground  String?            @default("#F4F6F8")
+  stickyDiscountBarText        String?            @default("#202223")
+  sidebarWidgetBackground      String?            @default("#F4F6F8")
+  sidebarWidgetTextColor       String?            @default("#202223")
+  createdAt                    DateTime?          @default(now())
+  updatedAt                    DateTime?          @updatedAt
+  status                       Boolean            @default(false)
+  backgroundOpacity            Int?               @default(100)
+  fontFamily                   String?            @default("system")
+  headingSize                  Int?               @default(18)
+  bodySize                     Int?               @default(14)
+  buttonSize                   Int?               @default(12)
+  footerSize                   Int?               @default(11)
+  coupons                      Coupon[]
+  popupAnalytics               PopupAnalytics[]
+  popupInteractions            PopupInteraction[]
+
+  @@index([shopName])
+}
+
+model PopupInteraction {
+  id            Int                 @id @default(autoincrement())
+  shopName      String
+  popupConfigId String?
+  ipAddress     String
+  location      String?
+  viewed        Boolean             @default(false)
+  availed       Boolean             @default(false)
+  masked        Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+  popupConfig   PopupConfiguration? @relation(fields: [popupConfigId], references: [id])
+
+  @@index([popupConfigId])
+  @@index([shopName])
+}
+
+model PopupAnalytics {
+  id            Int                 @id @default(autoincrement())
+  shopName      String
+  popupConfigId String?
+  city          String
+  viewCount     Int                 @default(0)
+  availCount    Int                 @default(0)
+  noViewCount   Int                 @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  popupConfig   PopupConfiguration? @relation(fields: [popupConfigId], references: [id])
+
+  @@index([popupConfigId, city])
+  @@index([shopName])
+}
+
+model Coupon {
+  id            String              @id @default(uuid())
+  popupConfigId String?
+  shopName      String? // Store shopName to preserve leads even when popup is deleted
+  couponCode    String
+  generatedAt   DateTime            @default(now())
+  userData      Json?
+  popupConfig   PopupConfiguration? @relation(fields: [popupConfigId], references: [id], onDelete: SetNull)
+
+  @@index([popupConfigId])
+  @@index([shopName])
+}
+
+model AnalyticsSummary {
+  id                Int      @id @default(autoincrement())
+  shopName          String
+  popupConfigId     String   @unique
+  totalInteractions Int      @default(0)
+  totalCoupons      Int      @default(0)
+  uniqueUsers       Int      @default(0)
+  dailyViewsJson    Json?
+  topCitiesJson     Json?
+  lastUpdated       DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  @@index([shopName])
+  @@index([popupConfigId])
+  @@index([lastUpdated])
+}
+
+model BillingDetails {
+  id                Int          @id @default(autoincrement())
+  shopName          String       @unique
+  plan              PlanName
+  billingCycle      BillingCycle
+  totalAmountBilled Float        @default(0.0)
+  startDate         DateTime
+  status            Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([shopName])
+}
+
+model TrackingSession {
+  id                  String          @id
+  shopName            String
+  firstSeen           DateTime
+  lastSeen            DateTime
+  checkoutCompleted   Boolean         @default(false)
+  intentScore         Int             @default(0)
+  hasPopupInteraction Boolean         @default(false)
+  hasDiscountClaim    Boolean         @default(false)
+  discountCode        String?
+  metadata            Json?           @default("{}")
+  events              TrackingEvent[]
+
+  @@index([shopName])
+  @@index([checkoutCompleted])
+  @@index([hasDiscountClaim])
+  @@index([hasPopupInteraction])
+  @@index([shopName, checkoutCompleted])
+  @@index([lastSeen])
+}
+
+model TrackingEvent {
+  id          Int             @id @default(autoincrement())
+  sessionId   String
+  shopName    String
+  eventType   String
+  timestamp   DateTime
+  path        String?
+  checkout    Boolean         @default(false)
+  intentScore Int?            @default(0)
+  data        Json?           @default("{}")
+  session     TrackingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([timestamp])
+  @@index([shopName])
+  @@index([eventType])
+  @@index([shopName, eventType])
+}
+
+enum PlanName {
+  Free
+  Starter
+  Essential
+  Professional
+}
+
+enum BillingCycle {
+  Monthly
+  Annual
+}

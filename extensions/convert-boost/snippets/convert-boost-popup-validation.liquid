@@ -1,0 +1,180 @@
+{% comment %}
+Convert Boost - Popup Validation Component
+Handles location-based popup validation using the new simplified backend
+{% endcomment %}
+
+// Function to validate popup with database-first backend
+async function validatePopupWithBackend(popupConfig) {
+  const validationLogger = {
+    error: (msg, data) => console.error(`[Validation] ${msg}`, data || '')
+  };
+
+  try {
+    // Validating popup with database-first backend
+
+    // Frontend optimization: Skip API calls ONLY for specific edge cases
+    
+    // ONLY skip when discountLocation is "exclude" with empty selection arrays or null values
+    // This means "exclude nothing" = "include everyone"
+    if (popupConfig.discountLocation === 'exclude') {
+      // console.log('🔍 Checking exclude logic', {
+      //   locationType: popupConfig.locationType,
+      //   selectedCountries: popupConfig.selectedCountries,
+      //   selectedState: popupConfig.selectedState,
+      //   selectedCity: popupConfig.selectedCity
+      // });
+      
+      let hasNoSelection = false;
+      
+      if (popupConfig.locationType === 'country') {
+        // For country: only check selectedCountries (plural array)
+        hasNoSelection = !popupConfig.selectedCountries || popupConfig.selectedCountries.length === 0;
+      } else if (popupConfig.locationType === 'state') {
+        hasNoSelection = !popupConfig.selectedState || popupConfig.selectedState.length === 0;
+      } else if (popupConfig.locationType === 'city') {
+        hasNoSelection = !popupConfig.selectedCity || popupConfig.selectedCity.length === 0;
+      }
+      
+      // console.log('🔍 Has no selection result:', hasNoSelection);
+      
+      if (hasNoSelection) {
+        // console.log('✅ Frontend optimization: Exclude nothing = include everyone', {
+        //   discountLocation: popupConfig.discountLocation,
+        //   locationType: popupConfig.locationType,
+        //   selectedCountries: popupConfig.selectedCountries,
+        //   selectedState: popupConfig.selectedState,
+        //   selectedCity: popupConfig.selectedCity
+        // });
+        return { shouldShow: true, optimized: true };
+      }
+    }
+
+    // Only make API call if optimization doesn't apply
+    // console.log('🌐 Making API call - optimization not applicable', {
+    //   locationRules: popupConfig.locationRules,
+    //   discountLocation: popupConfig.discountLocation,
+    //   locationType: popupConfig.locationType
+    // });
+
+    // Prepare validation payload (only location-based)
+    const validationPayload = {
+      locationRules: popupConfig.locationRules || 'everyWhere',
+      discountLocation: popupConfig.discountLocation || 'include',
+      locationType: popupConfig.locationType || 'country',
+      selectedCountries: popupConfig.selectedCountries || [],
+      selectedState: popupConfig.selectedState || [],
+      selectedCity: popupConfig.selectedCity || []
+    };
+
+    // console.log('📤 Sending validation payload', validationPayload);
+
+    const response = await fetch('https://convert-boost-backend.vercel.app/api/validate-popup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(validationPayload)
+    });
+
+    const result = await response.json();
+    
+    // console.log('📥 Backend validation response', {
+    //   status: response.status,
+    //   result: result,
+    //   userLocation: result.userLocation
+    // });
+
+    // 200 = show popup, 401 = don't show popup
+    if (response.status === 200) {
+      // console.log('✅ Popup validation PASSED - showing popup', {
+      //   userLocation: result.userLocation,
+      //   message: result.message
+      // });
+      return { 
+        shouldShow: true, 
+        userLocation: result.userLocation,
+        debug: result.debug 
+      };
+    } else if (response.status === 401) {
+      // console.log('❌ Popup validation FAILED - hiding popup', {
+      //   userLocation: result.userLocation,
+      //   message: result.message
+      // });
+      return { 
+        shouldShow: false, 
+        userLocation: result.userLocation,
+        reason: result.message,
+        debug: result.debug 
+      };
+    } else {
+      validationLogger.error('⚠️ Unexpected validation response', { 
+        status: response.status, 
+        result 
+      });
+      return { 
+        shouldShow: false, 
+        error: `Unexpected status: ${response.status}`,
+        details: result 
+      };
+    }
+
+  } catch (error) {
+    validationLogger.error('💥 Error validating popup with backend', { 
+      error: error.message,
+      stack: error.stack 
+    });
+    
+    // On error, default to not showing popup for safety
+    return { 
+      shouldShow: false, 
+      error: error.message,
+      fallback: 'Network error - defaulting to hide popup for safety'
+    };
+  }
+}
+
+// Helper function to validate visitor location (can be used anywhere in the extension)
+async function validateVisitorLocation(locationRules) {
+  const validationLogger = {
+    info: (msg, data) => console.log(`[LocationCheck] ${msg}`, data || ''),
+    debug: (msg, data) => console.log(`[LocationCheck] ${msg}`, data || ''),
+    error: (msg, data) => console.error(`[LocationCheck] ${msg}`, data || '')
+  };
+
+  try {
+    // console.log('🔍 Checking visitor location', locationRules);
+
+    const response = await fetch('https://convert-boost-backend.vercel.app/api/validate-popup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(locationRules)
+    });
+
+    const result = await response.json();
+    
+    // console.log('📍 Location check result', {
+    //   status: response.status,
+    //   userLocation: result.userLocation
+    // });
+
+    return {
+      success: response.status === 200,
+      userLocation: result.userLocation,
+      allowed: response.status === 200,
+      blocked: response.status === 401,
+      error: response.status >= 400 ? result.message : null
+    };
+
+  } catch (error) {
+    validationLogger.error('❌ Location check failed', { error: error.message });
+    return {
+      success: false,
+      error: error.message,
+      userLocation: null,
+      allowed: false,
+      blocked: true
+    };
+  }
+}

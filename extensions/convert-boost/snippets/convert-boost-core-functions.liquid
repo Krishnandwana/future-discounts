@@ -1,0 +1,356 @@
+let discountCode = localStorage.getItem('discountCode') || null;
+let savedPopupId = localStorage.getItem('popupId') || null;
+let currentFormData = null;
+
+const coreLogger = {
+  error: console.error,
+  warn: console.warn
+};
+
+function logEvent(type, details) {
+  try {
+    let data = JSON.parse(localStorage.getItem('userEngagementData')) || {events:[]};
+    data.events.push({type, details, timestamp:Date.now()});
+    localStorage.setItem('userEngagementData', JSON.stringify(data));
+  } catch (e) {}
+}
+
+function debug(...args) { 
+}
+
+function logStorage() {
+  const storageData = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      storageData[key] = localStorage.getItem(key);
+    }
+  } catch (e) {}
+}
+function getMachineTime() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = ('0' + (d.getMonth() + 1)).slice(-2);
+  const day = ('0' + d.getDate()).slice(-2);
+  const h = ('0' + d.getHours()).slice(-2);
+  const min = ('0' + d.getMinutes()).slice(-2);
+  const s = ('0' + d.getSeconds()).slice(-2);
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const absOff = Math.abs(off);
+  const offH = Math.floor(absOff / 60);
+  const offM = absOff % 60;
+  const tz = `GMT${sign}${('0' + offH).slice(-2)}:${('0' + offM).slice(-2)}`;
+  return `${m}/${day}/${y}, ${h}:${min}:${s} ${tz}`;
+}
+
+function canShowPopup() {
+  if (discountCode) {
+    return false;
+  }
+
+  const existingPopup = document.querySelector('[id^="popup-container-"]');
+  if (existingPopup && existingPopup.style.display === 'block') {
+    return false;
+  }
+
+  if (sessionStorage.getItem('convertBoostPopupShown')) {
+    return false;
+  }
+
+  return true;
+}
+function getProductId(path) {
+  if (!path.includes('/products/')) return null;
+  return path.split('/products/')[1].split('?')[0];
+}
+
+
+function copyCode(code, btnId) {
+  if (!code) return;
+  const textarea = document.createElement('textarea');
+  textarea.value = code;
+  textarea.style.position = 'fixed';
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    document.execCommand('copy');
+    const msg = document.createElement('div');
+    msg.textContent = 'Copied!';
+    msg.style.position = 'absolute';
+    msg.style.backgroundColor = '#fff';
+    msg.style.right = '35px';
+    msg.style.top = '20%';
+    msg.style.transform = 'translateY(-20%)';
+    msg.style.fontSize = '12px';
+    msg.style.color = '#666';
+    document.getElementById(btnId).parentNode.appendChild(msg);
+    setTimeout(() => msg.remove(), 2000);
+  } catch (err) {
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+function getDevice() {
+  return window.innerWidth <= 900 ? 'mobile' : 'desktop';
+}
+
+function getDeviceDetails() {
+  const width = window.innerWidth;
+  const userAgent = navigator.userAgent;
+  
+  if (width <= 900) {
+    let os = 'unknown';
+    if (/iPad|iPhone|iPod/.test(userAgent)) {
+      os = 'ios';
+    } else if (/Android/.test(userAgent)) {
+      os = 'android';
+    }
+    return { type: 'mobile', os: os };
+  }
+  return { type: 'desktop', os: null };
+}
+function checkPageRules() {
+  const path = window.location.pathname;
+  if (currentFormData.pageRules === 'everyPage') return true;
+  if (currentFormData.pageRules === 'specificPages') {
+    const rule = currentFormData.subPageRules;
+    if (rule === 'homepage') return path === '/' || path === '';
+    if (rule === 'product') return path.includes('/products/');
+    if (rule === 'collection') return path.includes('/collections/');
+  }
+  return false;
+}
+function checkDeviceRules() {
+  const deviceDetails = getDeviceDetails();
+  
+  if (currentFormData.devices.includes('all')) {
+    return true;
+  }
+  
+  if (!currentFormData.devices.includes(deviceDetails.type)) {
+    return false;
+  }
+  
+  if (deviceDetails.type === 'mobile' && currentFormData.mobileDevices && currentFormData.mobileDevices !== 'all') {
+    return currentFormData.mobileDevices === deviceDetails.os;
+  }
+  
+  return true;
+}
+function checkTimeRules() {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  
+  if (!currentFormData.scheduleRules || currentFormData.scheduleRules === 'showAllTime') {
+    return true;
+  }
+  
+  if (currentFormData.scheduleRules === 'schedule') {
+    try {
+      const start = new Date(currentFormData.startDate);
+      const end = new Date(currentFormData.endDate);
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return false;
+      }
+      
+      const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      const endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      
+      if (nowDate < startDate || nowDate > endDate) {
+        return false;
+      }
+      
+      if (!currentFormData.startTime || !currentFormData.endTime) {
+        return false;
+      }
+      
+      const startTimeParts = currentFormData.startTime.split(':');
+      const endTimeParts = currentFormData.endTime.split(':');
+      
+      if (startTimeParts.length !== 2 || endTimeParts.length !== 2) {
+        return false;
+      }
+      
+      const [startH, startM] = startTimeParts.map(Number);
+      const [endH, endM] = endTimeParts.map(Number);
+      
+      if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM) ||
+          startH < 0 || startH > 23 || startM < 0 || startM > 59 ||
+          endH < 0 || endH > 23 || endM < 0 || endM > 59) {
+        return false;
+      }
+      
+      const scheduleStart = startH * 60 + startM;
+      const scheduleEnd = endH * 60 + endM;
+      
+      let timeInRange = false;
+      
+      if (scheduleStart <= scheduleEnd) {
+        timeInRange = mins >= scheduleStart && mins <= scheduleEnd;
+      } else {
+        timeInRange = mins >= scheduleStart || mins <= scheduleEnd;
+      }
+      
+      return timeInRange;
+      
+    } catch (error) {
+      return false;
+    }
+  }
+  
+  return false;
+}
+
+function getBorderRadius(r) {
+  switch (r) {
+    case 'standard': return '8px';
+    case 'rounded': return '100%';
+    case 'sharp': return '0';
+    default: return '8px';
+  }
+}
+function handleScrollTrigger(popup) {
+  const percent = parseInt(currentFormData.scrollPercentage) || 0;
+  if (percent > 0) {
+    const checkScroll = () => {
+      const scrollPos = window.scrollY + window.innerHeight;
+      const total = document.documentElement.scrollHeight;
+      const scrolled = (scrollPos / total) * 100;
+      if (scrolled >= percent) {
+        popup.style.display = 'block';
+        return true;
+      }
+      return false;
+    };
+    
+    if (!checkScroll()) {
+      const handler = () => {
+        if (checkScroll()) window.removeEventListener('scroll', handler);
+      };
+      window.addEventListener('scroll', handler);
+    }
+  }
+}
+
+function handleTimerTrigger(popup) {
+  const time = parseInt(currentFormData.time) || 0;
+  if (time > 0) {
+    setTimeout(() => {
+      popup.style.display = 'block';
+    }, time * 1000);
+  } else {
+    popup.style.display = 'block';
+  }
+}
+
+function checkCurrentUrl() {
+  if (window.location.pathname.includes('/discount/')) {
+    localStorage.setItem('discountApplied', 'true');
+  }
+}
+
+window.setConvertBoostLogLevel = function(level) {
+  window.convertBoostLogger.setLogLevel(level);
+};
+
+window.getConvertBoostLogs = function(count = 50) {
+  return window.convertBoostLogger.getRecentLogs(count);
+};
+
+window.exportConvertBoostLogs = function() {
+  const logs = window.convertBoostLogger.exportLogs();
+  return logs;
+};
+
+async function trackPopupEvent(eventType, popupConfig, additionalData = {}) {
+  try {
+    const location = additionalData.location || 'Unknown';
+    const city = location?.city || location?.state || location?.country || 'Unknown';
+    
+    let ipAddress = 'unknown';
+    try {
+      const ipResponse = await fetch('https://api.ipify.org?format=json');
+      const ipData = await ipResponse.json();
+      ipAddress = ipData.ip || 'unknown';
+    } catch (ipError) {
+      ipAddress = window.location.hostname || 'unknown';
+    }
+
+    const trackingData = {
+      shopName: window.Shopify?.shop || 'unknown',
+      popupConfigId: popupConfig?.id || null,
+      eventType: eventType,
+      ipAddress: ipAddress,
+      location: typeof location === 'object' ? JSON.stringify(location) : location.toString(),
+      city: city,
+      userAgent: navigator.userAgent,
+      reason: additionalData.reason || null,
+      timestamp: new Date().toISOString(),
+      // Enhanced tracking for multi-location popups
+      discountValue: popupConfig?.discountValue || null,
+      discountType: popupConfig?.discountType || null,
+      valueType: popupConfig?.valueType || null,
+      locationType: popupConfig?.locationType || null,
+      discountLocation: popupConfig?.discountLocation || null,
+      selectedCountries: popupConfig?.selectedCountries || [],
+      selectedState: popupConfig?.selectedState || [],
+      selectedCity: popupConfig?.selectedCity || []
+    };
+    const response = await fetch('https://convert-boost-backend.vercel.app/api/track-popup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(trackingData)
+    });
+
+    if (response.ok) {
+    } else {
+      const errorData = await response.json();
+    }
+
+  } catch (error) {
+  }
+}
+
+function trackConversion(popupConfig, additionalData = {}) {
+  trackPopupEvent('conversion', popupConfig, additionalData);
+}
+window.convertBoostDebug = {
+  setLogLevel: window.setConvertBoostLogLevel,
+  getLogs: window.getConvertBoostLogs,
+  exportLogs: window.exportConvertBoostLogs,
+  currentLevel: () => window.convertBoostLogger ? window.convertBoostLogger.getLevelName(window.convertBoostLogger.currentLevel) : 'LOGGER_NOT_READY',
+  test: () => {
+    if (window.convertBoostLogger) {
+      window.convertBoostLogger.error('Test ERROR message');
+      window.convertBoostLogger.warn('Test WARN message');
+    }
+    return 'Test completed - check console above';
+  },
+  resetPopupState: () => {
+    sessionStorage.removeItem('convertBoostPopupShown');
+
+    if (window.intentEvaluationInterval) {
+      clearInterval(window.intentEvaluationInterval);
+      window.intentEvaluationInterval = null;
+    }
+
+    const popups = document.querySelectorAll('[id^="popup-container-"]');
+    popups.forEach(popup => popup.style.display = 'none');
+
+    return 'Popup state reset successfully';
+  },
+  status: () => {
+    return {
+      canShowPopup: canShowPopup(),
+      discountCode: !!discountCode,
+      sessionShown: !!sessionStorage.getItem('convertBoostPopupShown'),
+      intervalActive: !!window.intentEvaluationInterval,
+      currentPath: window.currentPagePath
+    };
+  }
+};

@@ -1,0 +1,175 @@
+/* Example styling */
+body {
+  background-color: #f4f6f9;
+}
+
+/* General Card Styling */
+.card {
+    border: 1px solid #e1e3e5;
+    border-radius: 8px;
+    padding: 20px;
+    background-color: #ffffff;
+  }
+  
+  /* Form Input Fields */
+  .input-field {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #dfe3e8;
+    border-radius: 4px;
+    margin-bottom: 16px;
+    font-size: 14px;
+  }
+  
+  /* Button Styles */
+  .primary-button {
+    background-color: #5c6ac4;
+    color: #ffffff;
+    border: none;
+    padding: 10px 20px;
+    font-size: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease-in-out;
+  }
+  
+  .primary-button:hover {
+    background-color: #4a55a2;
+  }
+  
+  .destructive-button {
+    background-color: #bf0711;
+    color: #ffffff;
+    border: none;
+    padding: 10px 20px;
+    font-size: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease-in-out;
+  }
+  
+  .destructive-button:hover {
+    background-color: #a60a0f;
+  }
+  
+  /* Custom Toast Notification */
+  .toast-notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background-color: #31373D;
+    color: #FFFFFF;
+    padding: 10px 15px;
+    border-radius: 4px;
+    box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+  }
+  
+  /* Tag Styling */
+  .tag {
+    display: inline-block;
+    background-color: #F4F6F8;
+    color: #4A4A4A;
+    padding: 5px 10px;
+    border-radius: 16px;
+    margin: 4px;
+  }
+  
+  /* Scrollable Content */
+  .scrollable-content {
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  
+  .scrollable-content::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  .scrollable-content::-webkit-scrollbar-thumb {
+    background-color: #dfe3e8;
+    border-radius: 10px;
+  }
+  
+  /* Responsive Grid and Layout */
+  @media (max-width: 768px) {
+    .card {
+      padding: 16px;
+    }
+  
+    .input-field {
+      font-size: 14px;
+    }
+  
+    .primary-button, .destructive-button {
+      width: 100%;
+      padding: 14px;
+      font-size: 14px;
+    }
+  }
+  
+  .preview-container {
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 400px;
+  }
+  
+  .preview-popup {
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    max-width: 300px;
+  }
+  
+  .preview-popup h2 {
+    margin-bottom: 10px;
+  }
+  
+  .preview-popup p {
+    margin-bottom: 15px;
+  }
+  
+  .preview-popup input {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+  }
+  
+  .preview-popup button {
+    background-color: black;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+    margin-bottom: 10px;
+  }
+  
+  .preview-popup small {
+    display: block;
+    font-size: 0.8em;
+    color: #666;
+  }
+
+.left-side-scrollable {
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+
+.right-side-fixed {
+  position: fixed;
+  right: 0;
+  top: 56px;
+  width: 58.33%;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+}
+
+@media (max-width: 767px) {
+  .right-side-fixed {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+}

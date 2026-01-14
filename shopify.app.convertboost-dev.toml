@@ -1,0 +1,27 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "34aeaa5ef4a1caf21660c5f0ef79972f"
+name = "ConvertBoost"
+handle = "convertboost-1"
+application_url = "https://convert-boost.vercel.app"
+embedded = true
+
+[webhooks]
+api_version = "2025-04"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,read_orders,read_products,write_discounts,read_all_orders,read_themes"
+
+[auth]
+redirect_urls = [
+  "https://convert-boost.vercel.app/auth/callback",
+  "https://convert-boost.vercel.app/auth/shopify/callback",
+  "https://convert-boost.vercel.app/api/auth/callback"
+]
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = true

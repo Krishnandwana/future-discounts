@@ -1,0 +1,12 @@
+{% schema %}
+{
+  "name": "Geo Deals",
+  "target": "head"
+}
+{% endschema %}
+
+{% comment %} Import all components {% endcomment %}
+{% render 'convert-boost-styles' %}
+{% render 'convert-boost-config', section: section %}
+{% render 'convert-boost-popup-html', section: section %}
+{% render 'convert-boost-main-script' %}

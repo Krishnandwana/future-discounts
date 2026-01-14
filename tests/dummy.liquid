@@ -1,0 +1,1340 @@
+{% schema %}
+{
+  "name": "Convert Boost",
+  "target": "head"
+}
+{% endschema %}
+
+<!-- Sticky Discount Bar -->
+<div class="top-bar" id="stickyDiscountBar" style="display:none;"></div>
+
+<!-- Popup Container -->
+<div id="popup-container-{{ section.id }}" class="popup-container" style="display:none;">
+  <div id="popup-overlay-{{ section.id }}"></div>
+  <div id="popup-content-{{ section.id }}"></div>
+</div>
+
+<!-- Inject dynamic config via Liquid -->
+<script>window.shopConfig={shopName:"{{ shop.permanent_domain | default: shop.myshopify_domain }}"};</script>
+
+<!-- Styles -->
+<style>
+  #popup-container-{{ section.id }} {position:fixed;top:0;left:0;width:100%;height:100%;z-index:1000;display:none}
+  #stickyDiscountBar {width:100%;z-index:1001;box-shadow:0 2px 4px rgba(0,0,0,.1);padding:10px;display:none;align-items:center;justify-content:center}
+  div#stickyDiscountBar.fixed {position:fixed;top:0}
+  #popup-overlay-{{ section.id }} {position:absolute;top:0;left:0;width:100%;height:100%;background-color:rgba(0,0,0,.5)}
+  #popup-content-{{ section.id }} {position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:450px;background:#fff;padding:0;border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,.1);text-align:center}
+  .popup-inner {display:flex;flex-direction:column;padding:12px 2vw}
+  .popup-close-btn {position:absolute;top:3%;right:3%;background-color:#fff;border-radius:100%;padding:1px 2px;cursor:pointer}
+  .popup-logo {width:100%;display:flex;justify-content:center}
+  .popup-backgroundImage {width:60%;height:100vh;max-height:350px;overflow:hidden}
+  .popup-logo img {object-fit:cover;border-radius:8px}
+  .popup-button {background-color:#007bff;color:#fff;padding:9px 20px;border:none;border-radius:6px;cursor:pointer;width:100%;margin-bottom:10px;font-size:12px;font-weight:700}
+  .popup-input-field {padding:9px;width:100%;border-radius:6px;border:1px solid #D82C0D;margin-bottom:10px;font-size:12px;background-color:#FFF;color:#202223}
+  .popup-footer-text {font-size:12px;line-height:normal;padding-bottom:20px;margin:0;color:#42474C}
+  .popup-primary-button {background-color:#008060;color:#FFF;padding:9px 20px;border:none;border-radius:6px;cursor:pointer;width:100%;margin-bottom:10px;font-size:12px;font-weight:700}
+  .popup-secondary-button {background-color:#FFF;color:#008060;padding:9px 20px;border:1px solid #008060;border-radius:6px;cursor:pointer;width:100%;margin-bottom:10px;font-size:12px;font-weight:700}
+  @media (max-width:600px) {.popup-backgroundImage {width:100%;height:auto;max-height:none}}
+</style>
+
+<!-- JavaScript -->
+<script defer>
+// Configuration and state
+const DEBUG = false;
+let discountCode = localStorage.getItem('discountCode') || null;
+let savedPopupId = localStorage.getItem('popupId') || null;
+let popupDismissed = false;
+let currentFormData;
+
+// Check for popup dismissal within last week
+const dismissedTime = localStorage.getItem('popupDismissedTimestamp');
+if (dismissedTime && (Date.now() - parseInt(dismissedTime) < 7 * 24 * 60 * 60 * 1000)) {
+  popupDismissed = true;
+}
+
+// Helper: Log user engagement 
+function logEvent(type, details) {
+  try {
+    let data = JSON.parse(localStorage.getItem('userEngagementData')) || {events:[]};
+    data.events.push({type, details, timestamp:Date.now()});
+    localStorage.setItem('userEngagementData', JSON.stringify(data));
+  } catch (e) {
+    console.error("Error logging:", e);
+  }
+}
+
+// Debug utilities
+function debug(...args) { if (DEBUG) console.log(...args); }
+function logStorage() {
+  if (!DEBUG) return;
+  debug("---- Local Storage ----");
+  for (let i = 0; i < localStorage.length; i++) {
+    debug(`${localStorage.key(i)}: ${localStorage.getItem(localStorage.key(i))}`);
+  }
+}
+
+// Machine time header for API requests
+function getMachineTime() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = ('0' + (d.getMonth() + 1)).slice(-2);
+  const day = ('0' + d.getDate()).slice(-2);
+  const h = ('0' + d.getHours()).slice(-2);
+  const min = ('0' + d.getMinutes()).slice(-2);
+  const s = ('0' + d.getSeconds()).slice(-2);
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const absOff = Math.abs(off);
+  const offH = Math.floor(absOff / 60);
+  const offM = absOff % 60;
+  const tz = `GMT${sign}${('0' + offH).slice(-2)}:${('0' + offM).slice(-2)}`;
+  return `${m}/${day}/${y}, ${h}:${min}:${s} ${tz}`;
+}
+
+// Check if popup can be shown
+function canShowPopup() {
+  if (discountCode) return false;
+  if (popupDismissed) return false;
+  return true;
+}
+
+// Get product identifier from path
+function getProductId(path) {
+  if (!path.includes('/products/')) return null;
+  return path.split('/products/')[1].split('?')[0];
+}
+
+// Sticky bar behavior
+window.addEventListener("scroll", function() {
+  const bar = document.getElementById("stickyDiscountBar");
+  if (window.scrollY > 0) bar.classList.add("fixed");
+  else bar.classList.remove("fixed");
+});
+
+// Copy discount code functionality
+function copyCode(code, btnId) {
+  if (!code) return;
+  const textarea = document.createElement('textarea');
+  textarea.value = code;
+  textarea.style.position = 'fixed';
+  document.body.appendChild(textarea);
+  try {
+    textarea.select();
+    document.execCommand('copy');
+    const msg = document.createElement('div');
+    msg.textContent = 'Copied!';
+    msg.style.position = 'absolute';
+    msg.style.backgroundColor = '#fff';
+    msg.style.right = '35px';
+    msg.style.top = '20%';
+    msg.style.transform = 'translateY(-20%)';
+    msg.style.fontSize = '12px';
+    msg.style.color = '#666';
+    document.getElementById(btnId).parentNode.appendChild(msg);
+    setTimeout(() => msg.remove(), 2000);
+  } catch (err) {
+    console.error('Copy failed:', err);
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+// Get device type
+function getDevice() {
+  return window.innerWidth <= 900 ? 'mobile' : 'desktop';
+}
+
+// Check page rules
+function checkPageRules() {
+  const path = window.location.pathname;
+  if (currentFormData.pageRules === 'everyPage') return true;
+  if (currentFormData.pageRules === 'specificPages') {
+    const rule = currentFormData.subPageRules;
+    if (rule === 'homepage') return path === '/' || path === '';
+    if (rule === 'product') return path.includes('/products/');
+    if (rule === 'collection') return path.includes('/collections/');
+  }
+  return false;
+}
+
+// Check device rules
+function checkDeviceRules() {
+  const device = getDevice();
+  return currentFormData.devices.includes('all') || currentFormData.devices.includes(device);
+}
+
+// Check time rules
+function checkTimeRules() {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  if (currentFormData.scheduleRules === 'showAllTime') return true;
+  if (currentFormData.scheduleRules === 'schedule') {
+    const start = new Date(currentFormData.startDate);
+    const end = new Date(currentFormData.endDate);
+    if (now < start || now > end) return false;
+    
+    const [startH, startM] = currentFormData.startTime.split(':').map(Number);
+    const [endH, endM] = currentFormData.endTime.split(':').map(Number);
+    const scheduleStart = startH * 60 + startM;
+    const scheduleEnd = endH * 60 + endM;
+    
+    return mins >= scheduleStart && mins <= scheduleEnd;
+  }
+  return false;
+}
+
+// Border radius helper
+function getBorderRadius(r) {
+  switch (r) {
+    case 'standard': return '8px';
+    case 'rounded': return '100%';
+    case 'sharp': return '0';
+    default: return '8px';
+  }
+}
+
+// Popup rendering
+function renderPopup(data) {
+  const container = document.getElementById('popup-content-{{ section.id }}');
+  const imgPos = data.imagePosition || 'none';
+  const align = data.alignment || 'left';
+  const cornerRadius = data.cornerRadius || '0';
+
+  let logo = data.logo ? `<img src="${data.logo}" alt="Logo" style="width:${data.imageWidth}px;height:${data.imageWidth}px;object-fit:cover;border-radius:${getBorderRadius(cornerRadius)};">` : '';
+  
+  let bgStyle = data.backgroundImage && imgPos === 'background'
+    ? `background-image:url(${data.backgroundImage});background-size:cover;background-position:center;background-repeat:no-repeat;`
+    : '';
+    
+  let contentStyle = `background-color:${data.backgroundColor};${bgStyle}padding:0 20px;border-radius:8px;`;
+  
+  let fields = data.fields?.map(f => f.checked ? `
+    <input type="${f.type}" placeholder="Enter ${f.label}" name="${f.label.replace(/\s+/g,'').toLowerCase()}" required class="popup-input-field" style="padding:9px;width:100%;border-radius:6px;border:1px solid ${data.consentColor};margin-bottom:10px;font-size:12px;background-color:${data.inputColor};color:${data.textColor};">
+  ` : '').join('');
+
+  let primaryBtn = data.primaryButton ? `
+    <button id="primaryButton" class="popup-button" style="background-color:${data.primaryButtonBackground};color:${data.primaryButtonTextColor};padding:9px 20px;border:none;border-radius:6px;cursor:pointer;width:100%;margin-bottom:10px;font-size:12px;font-weight:bold;">
+      ${data.primaryButtonText}
+    </button>` : '';
+
+  let secondaryBtn = data.secondaryButton ? `
+    <p id="secondaryButton" style="margin:0;color:${data.secondaryButtonTextColor};cursor:pointer;font-size:12px;">
+      ${data.secondaryButtonText}
+    </p>` : '';
+
+  const sideImg = (imgPos === 'left' || imgPos === 'right') && data.backgroundImage ? `
+    <div style="width:60%;height:100vh;max-height:inherit;overflow:hidden;">
+      <img src="${data.backgroundImage}" style="width:100%;height:100%;object-fit:cover;object-position:center;mask-repeat:no-repeat;border-top-left-radius:${imgPos==='left'?'0.5rem':''};border-bottom-left-radius:${imgPos==='left'?'0.5rem':''};border-top-right-radius:${imgPos==='right'?'0.5rem':''};border-bottom-right-radius:${imgPos==='right'?'0.5rem':''};">
+    </div>
+  ` : '';
+
+  const html = `
+    <div class="popup-inner" style="position:relative;text-align:center;padding:0;background:${bgStyle?'transparent':data.backgroundColor};border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,.1);max-width:450px;width:100%;">
+      <div style="display:${imgPos==='left'||imgPos==='right'?'flex':''};flex-direction:${imgPos==='left'?'row':'row-reverse'};border-radius:0.5rem;width:100%;max-height:${imgPos==='left'||imgPos==='right'?'376px':''};align-items:center;justify-content:${imgPos==='left'?'flex-start':'flex-end'};">
+        ${sideImg}
+        <div style="${contentStyle}">
+          <div style="display:flex;flex-direction:column;direction:${align==='right'?'rtl':'ltr'};justify-content:space-between;">
+            <div style="width:100%;display:${align==='center'?'block':'flex'};justify-content:${align};align-items:center;margin:15px 0;">
+              ${logo}
+              <div style="display:flex;align-items:center;justify-content:center;">
+                <div style="text-align:${align};margin-right:${align==='right'&&data.logo?'20px':'0'};margin-left:${align==='left'&&data.logo?'10px':'0'};">
+                  <h2 style="margin:0;font-weight:bold;font-size:2.2rem;color:${data.headingColor};">${data.heading}</h2>
+                  <p style="margin:0;color:${data.descriptionColor};direction:${align==='right'?'rtl':'ltr'};">${data.description}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          ${fields}
+          ${primaryBtn}
+          ${secondaryBtn}
+          <p style="font-size:12px;line-height:normal;padding-bottom:20px;margin:0;color:${data.footerTextColor};">${data.footerText||"You are signing up to receive communication via email and can unsubscribe at any time."}</p>
+        </div>
+      </div>
+      <div id="popupCloseButton" style="position:absolute;top:3%;right:3%;background-color:white;border-radius:100%;padding:3px;cursor:pointer;">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="black" style="width:12px;display:flex;justify-content:center;align-items:center;">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </div>
+    </div>`;
+
+  container.innerHTML = html;
+
+  document.getElementById('primaryButton').addEventListener('click', () => {
+    const inputs = document.querySelectorAll('.popup-input-field');
+    let allFilled = true;
+    const params = new URLSearchParams();
+    params.append('popupConfigId', data.id);
+    params.append('shopName', window.shopConfig.shopName);
+    
+    inputs.forEach(input => {
+      if (!input.value.trim()) {
+        allFilled = false;
+        input.style.border = '1px solid red';
+      } else {
+        input.style.border = '1px solid ' + data.consentColor;
+        params.append(input.name, input.value);
+      }
+    });
+    
+    if (allFilled) triggerDiscountAPI(params);
+  });
+
+  if (document.getElementById('secondaryButton')) {
+    document.getElementById('secondaryButton').addEventListener('click', () => {
+      document.getElementById('popup-container-{{ section.id }}').style.display = 'none';
+      localStorage.setItem('popupDismissedTimestamp', Date.now().toString());
+      popupDismissed = true;
+      logEvent("popupDismissedBySecondaryButton", {timestamp:Date.now()});
+    });
+  }
+  
+  document.getElementById('popupCloseButton').addEventListener('click', () => {
+    document.getElementById('popup-container-{{ section.id }}').style.display = 'none';
+    localStorage.setItem('popupDismissedTimestamp', Date.now().toString());
+    popupDismissed = true;
+    debug("Popup closed via close button");
+    logStorage();
+  });
+}
+
+// Success popup rendering
+function renderSuccessPopup(data, code) {
+  const container = document.getElementById('popup-content-{{ section.id }}');
+  const align = data.alignment || 'left';
+  const imgPos = data.imagePosition || 'none';
+  
+  let bgStyle = data.backgroundImage && imgPos === 'background'
+    ? `background-image:url(${data.backgroundImage});background-size:cover;background-position:center;background-repeat:no-repeat;`
+    : '';
+    
+  let contentStyle = `background-color:${data.backgroundColor};${bgStyle}padding:0 20px;border-radius:8px;`;
+  
+  let btnClick = '';
+  if (data.clickAction === 'closeForm') {
+    btnClick = "document.getElementById('popup-container-{{ section.id }}').style.display='none'";
+  } else if (data.clickAction === 'redirect') {
+    btnClick = "window.location.href='" + data.redirectUrl + "'";
+  }
+
+  const sideImg = (imgPos === 'left' || imgPos === 'right') && data.backgroundImage ? `
+    <div style="width:60%;height:100vh;max-height:inherit;overflow:hidden;">
+      <img src="${data.backgroundImage}" style="width:100%;height:100%;object-fit:cover;object-position:center;mask-repeat:no-repeat;border-top-left-radius:${imgPos==='left'?'0.5rem':''};border-bottom-left-radius:${imgPos==='left'?'0.5rem':''};border-top-right-radius:${imgPos==='right'?'0.5rem':''};border-bottom-right-radius:${imgPos==='right'?'0.5rem':''};">
+    </div>
+  ` : '';
+
+  const html = `
+    <div class="popup-inner" style="position:relative;text-align:center;padding:0;background:${bgStyle?'transparent':data.backgroundColor};border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,.1);max-width:450px;width:100%;">
+      <div style="display:${imgPos==='left'||imgPos==='right'?'flex':''};flex-direction:${imgPos==='left'?'row':'row-reverse'};border-radius:0.5rem;width:100%;max-height:${imgPos==='left'||imgPos==='right'?'376px':''};align-items:center;justify-content:${imgPos==='left'?'flex-start':'flex-end'};">
+        ${sideImg}
+        <div style="${contentStyle}">
+          <div style="display:flex;flex-direction:column;direction:${align==='right'?'rtl':'ltr'};justify-content:space-between;">
+            <div style="width:100%;display:${align==='center'?'block':'flex'};justify-content:${align};align-items:center;margin:15px 0;">
+              ${data.logo ? `<img src="${data.logo}" alt="Logo" style="width:${data.imageWidth}px;height:${data.imageWidth}px;object-fit:cover;border-radius:${getBorderRadius(data.cornerRadius)};">` : ''}
+              <div style="display:flex;align-items:center;justify-content:center;">
+                <div style="text-align:${align};margin-top:${align==='center'?'10px':'0'};margin-right:${align==='right'&&data.logo?'20px':'0'};margin-left:${data.logo&&align==='left'?'5px':'0'};">
+                  <h2 style="margin:0;font-weight:bold;font-size:2.2rem;color:${data.headingColor};">${data.sucessStatusHeading}</h2>
+                </div>
+              </div>
+            </div>
+            <div style="position:relative">
+              <input type="text" value="${code}" readonly style="padding:9px;width:100%;border-radius:6px;border:1px solid ${data.consentColor};margin-bottom:10px;font-size:12px;background-color:${data.inputColor};color:${data.textColor}">
+              <div id="copyButton" style="cursor:pointer;position:absolute;right:10px;top:19px;transform:translateY(-50%)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </div>
+            </div>
+            ${(data.clickAction === 'closeForm' || data.clickAction === 'redirect') ? `
+              <button onclick="${btnClick}" style="background-color:${data.primaryButtonBackground};color:${data.primaryButtonTextColor};padding:9px 20px;border:none;border-radius:6px;cursor:pointer;width:100%;margin-bottom:10px;font-size:12px;font-weight:bold;">
+                ${data.buttonText}
+              </button>
+            ` : ''}
+          </div>
+          <p style="margin:0 0 10px;color:${data.descriptionColor};font-size:0.7rem;">${data.successDescription}</p>
+        </div>
+      </div>
+      <div id="popupCloseButtonSuccess" style="position:absolute;top:3%;right:3%;background-color:white;border-radius:100%;padding:3px;cursor:pointer;">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="black" style="width:12px;display:flex;justify-content:center;align-items:center;">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+        </svg>
+      </div>
+    </div>`;
+
+  container.innerHTML = html;
+
+  document.getElementById('copyButton').addEventListener('click', () => {
+    copyCode(code, 'copyButton');
+  });
+
+  document.getElementById('popupCloseButtonSuccess').addEventListener('click', () => {
+    document.getElementById('popup-container-{{ section.id }}').style.display = 'none';
+    localStorage.setItem('popupShown', 'true');
+  });
+}
+
+// Initialize sticky discount bar
+function initStickyBar() {
+  if (!discountCode) return;
+  const bar = document.getElementById('stickyDiscountBar');
+  const bgColor = currentFormData?.stickyDiscountBarBackground || 'transparent';
+  
+  if (bar) {
+    bar.style.display = 'flex';
+    bar.style.background = bgColor;
+    bar.innerHTML = `
+      <div id="DiscountBarInnerSection" style="padding-top:5px;background-color:${currentFormData?.stickyDiscountBarBackground};position:relative;display:flex;justify-content:center;">
+        <div style="color:${currentFormData?.stickyDiscountBarText};margin-right:8px;">Here you go</div>
+        <div style="position:relative;">
+          <input type="text" value="${discountCode||''}" id="discountCodeInput" readonly style="padding:9px;width:230px;border-radius:6px;border:1px solid ${currentFormData.consentColor};margin-bottom:4px;font-size:12px;background-color:${currentFormData.inputColor};color:${currentFormData.textColor};">
+          <div id="copyButtonTop" style="cursor:pointer;position:absolute;right:10px;top:50%;transform:translateY(-50%)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div onclick="document.getElementById('stickyDiscountBar').style.display='none'" style="position:absolute;top:10px;right:10px;">
+        <span>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="black" style="width:2rem;font-weight:900;background-color:white;border-radius:100%;padding:2px">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </span>
+      </div>
+    `;
+    
+    bar.style.display = 'flex';
+    document.getElementById('copyButtonTop').addEventListener('click', () => {
+      copyCode(discountCode, 'copyButtonTop');
+    });
+  }
+}
+
+// Handle trigger types for popups
+function handleScrollTrigger(popup) {
+  const percent = parseInt(currentFormData.scrollPercentage) || 0;
+  if (percent > 0) {
+    const checkScroll = () => {
+      const scrollPos = window.scrollY + window.innerHeight;
+      const total = document.documentElement.scrollHeight;
+      const scrolled = (scrollPos / total) * 100;
+      if (scrolled >= percent) {
+        popup.style.display = 'block';
+        return true;
+      }
+      return false;
+    };
+    
+    if (!checkScroll()) {
+      const handler = () => {
+        if (checkScroll()) window.removeEventListener('scroll', handler);
+      };
+      window.addEventListener('scroll', handler);
+    }
+  }
+}
+
+function handleTimerTrigger(popup) {
+  const time = parseInt(currentFormData.time) || 0;
+  if (time > 0) {
+    setTimeout(() => {
+      popup.style.display = 'block';
+    }, time * 1000);
+  } else {
+    popup.style.display = 'block';
+  }
+}
+
+// Check URL for discount
+function checkCurrentUrl() {
+  if (window.location.pathname.includes('/discount/')) {
+    localStorage.setItem('discountApplied', 'true');
+  }
+}
+
+// API functions
+function triggerSilentDiscount(params) {
+  fetch('https://spotdiscount.dripx.club/api/create-silent-discount', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: params.toString(),
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      discountCode = data.discountCode;
+      localStorage.setItem('discountCode', discountCode);
+      localStorage.setItem('popupId', currentFormData.id);
+      localStorage.setItem('discountApplied', 'true');
+      window.location.href = '/discount/' + discountCode;
+    } else {
+      console.error("Error creating discount:", data.error);
+    }
+  })
+  .catch(err => {
+    console.error("API Error:", err);
+  });
+}
+
+function triggerDiscountAPI(params) {
+  const btn = document.getElementById('primaryButton');
+  if (!btn) return console.error("Primary button not found");
+  
+  // If discount code exists for this popup, show success popup
+  if (discountCode && savedPopupId && savedPopupId === currentFormData.id) {
+    return renderSuccessPopup(currentFormData, discountCode);
+  }
+  
+  // Update button state
+  btn.textContent = 'Generating discount code...';
+  btn.disabled = true;
+  
+  // For manual discounts, use the predefined code
+  if (currentFormData.discountType === 'manual' && currentFormData.couponCode) {
+    discountCode = currentFormData.couponCode;
+    localStorage.setItem('discountCode', discountCode);
+    localStorage.setItem('popupId', currentFormData.id);
+    
+    if (currentFormData.stickyDiscountBar === 'yes') initStickyBar();
+    return renderSuccessPopup(currentFormData, discountCode);
+  }
+  
+  // For other discount types, call the API
+  fetch('https://spotdiscount.dripx.club/api/create-discount', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: params.toString()
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.success) {
+      discountCode = data.discountCode;
+      localStorage.setItem('discountCode', discountCode);
+      localStorage.setItem('popupId', currentFormData.id);
+      
+      if (currentFormData.discountType === 'silent') {
+        return window.location.href = currentFormData.redirectUrl || '/';
+      }
+      
+      if (currentFormData.stickyDiscountBar === 'yes') initStickyBar();
+      renderSuccessPopup(currentFormData, discountCode);
+    } else {
+      console.error("Error creating discount:", data.error);
+      btn.textContent = 'Claim Discount Now';
+      btn.disabled = false;
+    }
+  })
+  .catch(err => {
+    console.error("API Error:", err);
+    btn.textContent = 'Claim Discount Now';
+    btn.disabled = false;
+  });
+}
+
+// Show popup with appropriate conditions
+function showPopup() {
+  if (!canShowPopup()) return;
+
+  const storedDiscountCode = localStorage.getItem('discountCode');
+  const storedPopupId = localStorage.getItem('popupId');
+  const discountApplied = localStorage.getItem('discountApplied');
+  
+  // Handle silent discount redirect
+  if (storedDiscountCode && storedPopupId && !discountApplied && 
+      currentFormData && currentFormData.discountType === 'silent') {
+      localStorage.setItem('discountApplied', 'true');
+      window.location.href = '/discount/' + storedDiscountCode;
+      return;
+  }
+  
+  // Handle silent discount generation
+  if (currentFormData && currentFormData.discountType === 'silent') {
+    const params = new URLSearchParams();
+    params.append('popupConfigId', currentFormData.id);
+    params.append('shopName', window.shopConfig.shopName);
+    params.append('discountName', currentFormData.discountName);
+    params.append('discountValue', currentFormData.discountValue);
+    params.append('minPurchaseValue', currentFormData.minPurchaseValue);
+    params.append('purchaseType', currentFormData.purchaseType);
+    params.append('maxUsesType', currentFormData.maxUsesType);
+    params.append('maxTotalUses', currentFormData.maxTotalUses);
+    params.append('combineWithProductDiscounts', currentFormData.combineWithProductDiscounts);
+    params.append('combineWithOrderDiscounts', currentFormData.combineWithOrderDiscounts);
+    params.append('combineWithShippingDiscounts', currentFormData.combineWithShippingDiscounts);
+    params.append('discountType', currentFormData.discountType);
+    params.append('valueType', currentFormData.valueType);
+  
+    triggerSilentDiscount(params);
+    return;
+  }
+  
+  // If code exists, show sticky bar
+  if (discountCode && savedPopupId && savedPopupId === currentFormData.id) {
+    if (currentFormData.stickyDiscountBar === 'yes') {
+      initStickyBar();
+    }
+    return;
+  }
+  
+  // Main popup display logic
+  if (currentFormData) {
+    renderPopup(currentFormData);
+    const popupContainer = document.getElementById(`popup-container-{{ section.id }}`);
+    if (!popupContainer) return;
+  
+    const baseConditions = checkPageRules() && checkDeviceRules() && checkTimeRules();
+  
+    // Intent-based popup logic
+    if (currentFormData.trigger === 'intent') {
+      debug("[Popup] Intent trigger detected. Initializing PurchaseIntentClassifier...");
+      
+      // Use the full classifier implementation
+      class PurchaseIntentClassifier {
+        constructor(config) {
+          this.popupShown = false;
+          this.config = {
+            interventionThresholds: {willing:0.65, hesitating:0.4, notWilling:0.7},
+            weights: {
+              willing: [0.45, 0.35, -0.2, 0.15, 0.3, 0.4, 0.25],
+              hesitating: [0.3, 0.4, 0.5, 0.3, 0.25, 0.35, -0.1],
+              notWilling: [-0.6, -0.5, -0.3, -0.4, -0.35, -0.45, -0.2]
+            },
+            biases: {willing:1.2, hesitating:0.7, notWilling:-1.0},
+            intentMultiplier: 10,
+            ...config
+          };
+          debug("[PIC] Constructor config:", this.config);
+          this.state = {
+            behavioralMetrics: this.initializeMetrics(),
+            sessionStart: Date.now(),
+            lastActionTime: Date.now(),
+            activeListeners: []
+          };
+          this.engagementData = this.loadPersistentState()?.engagementData || {
+            visits: [],
+            productViews: {},
+            cartVisits: {count:0, lastVisit:null, visits:[]},
+            cartAbandonment: 0,
+            totalTimeSpent: 0,
+            lastVisit: null,
+            purchaseHistory: [],
+            productVisits: {}
+          };
+          this.intentScore = 0;
+          this.events = new Set();
+          this.priceViewDuration = 0;
+          this.lastCartVisit = 0;
+          this.cartAbandoned = false;
+          this.timeInterval = null;
+          debug("[PIC] Initial state:", this.state);
+          this.initializeTracking();
+        }
+        
+        incrementScore(eventType, points) {
+          const basePoints = points * this.config.intentMultiplier;
+          const finalPoints = this.cartAbandoned ? basePoints * 1.5 : basePoints;
+          this.intentScore += finalPoints;
+          this.events.add(eventType);
+          debug(`[PIC] Score: ${eventType}, +${finalPoints}, Total: ${this.intentScore}`);
+          logEvent("incrementScore", {eventType, points:finalPoints, totalScore:this.intentScore});
+        }
+        
+        initializeMetrics() {
+          return {
+            cart: {visits:[], abandonments:0, totalTime:0},
+            product: {views:{}, comparisons:0, variantChanges:0},
+            temporal: {hesitationPeriods:[], decisionTime:0, inactivePeriods:[]},
+            navigation: {scrollDepth:0, exitIntent:false, pageChanges:0}
+          };
+        }
+        
+        initializeTracking() {
+          debug("[PIC] Initializing tracking...");
+          this.setupCoreListeners();
+          this.setupEventTracking();
+          this.loadPersistentState();
+        }
+        
+        setupCoreListeners() {
+          const trackers = {
+            click: this.handleClickEvents.bind(this),
+            scroll: this.handleScrollEvents.bind(this),
+            mouseleave: this.handleExitIntent.bind(this),
+            visibilitychange: this.handleTabSwitch.bind(this)
+          };
+          for (const [event, handler] of Object.entries(trackers)) {
+            document.addEventListener(event, handler);
+            this.state.activeListeners.push({event, handler});
+            debug(`[PIC] Attached listener for ${event}`);
+          }
+        }
+        
+        updateCartMetrics(type, time) {
+          this.state.behavioralMetrics.cart.visits.push({timestamp:time, type});
+          if (!this.engagementData.cartVisits) {
+            this.engagementData.cartVisits = {count:0, lastVisit:null, visits:[]};
+          }
+          this.engagementData.cartVisits.visits.push({timestamp:time, type});
+          this.engagementData.cartVisits.count = this.engagementData.cartVisits.visits.length;
+          debug("[PIC] Updated cart metrics");
+          this.savePersistentState();
+          logEvent("cartEvent", {type, timestamp:time});
+        }
+        
+        handleClickEvents(e) {
+          const currentTime = Date.now();
+          if (this.isCartElement(e.target)) {
+            debug("[PIC] Detected cart element click");
+            this.updateCartMetrics('visit', currentTime);
+          }
+          if (this.isProductElement(e.target)) {
+            debug("[PIC] Detected product element click");
+            this.updateProductMetrics(e.target, currentTime);
+          }
+          const hesitationTime = (currentTime - this.state.lastActionTime) / 1000;
+          if (hesitationTime > 2 && hesitationTime < 15) {
+            this.state.behavioralMetrics.temporal.hesitationPeriods.push(hesitationTime);
+            debug("[PIC] Recorded hesitation: " + hesitationTime);
+            logEvent("hesitation", {duration:hesitationTime});
+          }
+          this.state.lastActionTime = currentTime;
+        }
+        
+        handleScrollEvents() {
+          const scrollDepth = (window.scrollY / document.documentElement.scrollHeight) * 100;
+          this.state.behavioralMetrics.navigation.scrollDepth = Math.max(
+            this.state.behavioralMetrics.navigation.scrollDepth,
+            scrollDepth
+          );
+          debug("[PIC] Scroll depth: " + this.state.behavioralMetrics.navigation.scrollDepth);
+          logEvent("scroll", {scrollDepth});
+        }
+        
+        handleExitIntent(e) {
+          debug("[PIC] Exit intent detected");
+          this.state.behavioralMetrics.navigation.exitIntent = true;
+          logEvent("exitIntent", {timestamp:Date.now()});
+        }
+        
+        handleTabSwitch(e) {
+          debug("[PIC] Tab visibility: " + !document.hidden);
+          if (document.hidden) {
+            this.state.behavioralMetrics.temporal.inactivePeriods.push(Date.now());
+            logEvent("inactivePeriod", {timestamp:Date.now()});
+          }
+        }
+        
+        isCartElement(target) {
+          return target && target.matches && target.matches('.cart, [data-cart]');
+        }
+        
+        isProductElement(target) {
+          return target && target.matches && target.matches('.product, [data-product]');
+        }
+        
+        updateProductMetrics(target, time) {
+          // For brevity - still tracks product metrics
+        }
+        
+        setupEventTracking() {
+          try {
+            this.trackAddToCart();
+            this.trackVariantSelections();
+            this.trackPriceInteractions();
+            this.trackScrollBehavior();
+            this.trackTimeSpent();
+            this.trackCartAbandonmentBehavior();
+            this.trackProductImageInteractions();
+          } catch (error) {
+            console.error("[PIC] Event tracking error:", error);
+          }
+        }
+        
+        trackAddToCart() {
+          const addToCartSelectors = 'form[action="/cart/add"],[data-action="add-to-cart"],.add-to-cart-button,[name="add"],button[type="submit"]';
+          document.addEventListener('click', (event) => {
+            const element = event.target.closest(addToCartSelectors);
+            if (element) {
+              if (this.cartAbandoned) this.incrementScore('return_add_to_cart', 40);
+              else this.incrementScore('add_to_cart', 30);
+              logEvent("addToCart", {clicked:true});
+            }
+          });
+          debug("[PIC] Add-to-cart tracking setup");
+        }
+        
+        trackVariantSelections() {
+          const variantSelectors = '[data-product-option],select[name*="options"],.single-option-selector,[data-index="option"],.product-form__controls-group select,.variant-input-wrap input,.swatch input[type="radio"],.product-form__input input[type="radio"],[data-variant-selector]';
+          document.addEventListener('change', (event) => {
+            const variant = event.target.closest(variantSelectors);
+            if (variant) {
+              debug("[PIC] Variant changed: " + variant.value);
+              this.incrementScore('variant_selected', 10);
+              logEvent("variantSelection", {value:variant.value});
+            }
+          });
+          document.addEventListener('click', (event) => {
+            const swatch = event.target.closest('.swatch, .color-swatch, [data-swatch]');
+            if (swatch) {
+              debug("[PIC] Swatch selected: " + (swatch.dataset.value || swatch.value));
+              this.incrementScore('variant_selected', 10);
+              logEvent("swatchSelection", {value:swatch.dataset.value || swatch.value});
+            }
+          });
+          debug("[PIC] Variant selection tracking setup");
+        }
+        
+        trackPriceInteractions() {
+          const priceSelectors = '.price,[data-price],.compare-at-price,.product-price,.price__regular';
+          let priceViewStart = 0;
+          const currentProduct = this.getProductIdentifier(window.location.pathname);
+          document.addEventListener('mouseover', (event) => {
+            const priceElement = event.target.closest(priceSelectors);
+            if (priceElement && !priceViewStart) priceViewStart = Date.now();
+          });
+          document.addEventListener('mouseout', (event) => {
+            const priceElement = event.target.closest(priceSelectors);
+            if (priceElement && priceViewStart > 0) {
+              this.priceViewDuration += (Date.now() - priceViewStart) / 1000;
+              if (this.priceViewDuration > 5) {
+                if (currentProduct && this.engagementData.productVisits && this.engagementData.productVisits[currentProduct]) {
+                  this.engagementData.productVisits[currentProduct].priceChecks = 
+                    (this.engagementData.productVisits[currentProduct].priceChecks || 0) + 1;
+                  this.savePersistentState();
+                }
+                if (!this.events.has('price_consideration')) {
+                  this.incrementScore('price_consideration', 20);
+                }
+                logEvent("priceInteraction", {duration:this.priceViewDuration});
+              }
+              priceViewStart = 0;
+            }
+          });
+          debug("[PIC] Price interaction tracking setup");
+        }
+        
+        trackScrollBehavior() {
+          let lastScrollTime = Date.now();
+          let readingTime = 0;
+          let lastScrollTop = 0;
+          window.addEventListener('scroll', () => {
+            const st = window.pageYOffset;
+            const currentTime = Date.now();
+            const timeDiff = currentTime - lastScrollTime;
+            if (Math.abs(st - lastScrollTop) < 50 && timeDiff > 500) {
+              readingTime++;
+              if (readingTime > 15 && !this.events.has('careful_reading')) {
+                this.incrementScore('careful_reading', 15);
+              }
+              logEvent("readingTime", {readingTime});
+            }
+            const scrollPercent = (st / document.documentElement.scrollHeight) * 100;
+            if (scrollPercent > 85 && !this.events.has('full_content_view')) {
+              this.incrementScore('full_content_view', 25);
+              logEvent("fullContentView", {scrollPercent});
+            }
+            lastScrollTop = st;
+            lastScrollTime = currentTime;
+          });
+          debug("[PIC] Scroll behavior tracking setup");
+        }
+        
+        trackTimeSpent() {
+          let timeOnPage = 0;
+          let activeTime = 0;
+          let lastActivityTime = Date.now();
+          const activityListener = () => {
+            const currentTime = Date.now();
+            if (currentTime - lastActivityTime < 5000) activeTime++;
+            lastActivityTime = currentTime;
+          };
+          ['mousemove', 'scroll', 'click'].forEach(event => {
+            document.addEventListener(event, activityListener);
+          });
+          this.timeInterval = setInterval(() => {
+            timeOnPage++;
+            if (timeOnPage > 20 && activeTime > 300 && !this.events.has('high_engagement')) {
+              debug("[PIC] High engagement event triggered");
+              this.incrementScore('high_engagement', 25);
+              clearInterval(this.timeInterval);
+              logEvent("highEngagement", {timeOnPage, activeTime});
+            }
+          }, 1000);
+          debug("[PIC] Time spent tracking setup");
+        }
+        
+        trackCartAbandonmentBehavior() {
+          try {
+            if (!this.engagementData.cartVisits) {
+              this.engagementData.cartVisits = {count:0, lastVisit:null, visits:[]};
+              this.savePersistentState();
+            }
+            const currentPage = window.location.pathname;
+            const referrer = document.referrer;
+            if (referrer.includes('/cart') && !currentPage.includes('/cart')) {
+              this.engagementData.cartVisits.count++;
+              this.engagementData.cartVisits.visits.push({
+                timestamp: Date.now(),
+                exitPage: currentPage,
+                type: 'cart_abandoned'
+              });
+              this.cartAbandoned = true;
+              this.engagementData.cartVisits.lastVisit = Date.now();
+              this.savePersistentState();
+              this.checkHesitationPatterns();
+              logEvent("cartAbandoned", {page:currentPage});
+            }
+            this.setupCartTracking();
+          } catch (error) {
+            console.error("[PIC] Cart abandonment error:", error);
+          }
+        }
+        
+        setupCartTracking() {
+          const cartSelectors = '[href*="/cart"],.cart-icon,.cart-button,[data-cart-toggle],[aria-controls*="cart"],.cart-drawer-trigger,#cart-icon-bubble,.header__cart';
+          document.addEventListener('click', (event) => {
+            const cartElement = event.target.closest(cartSelectors);
+            if (cartElement) {
+              this.engagementData.cartVisits.count++;
+              this.engagementData.cartVisits.visits.push({timestamp:Date.now(), type:'cart_open'});
+              this.lastCartVisit = Date.now();
+              this.engagementData.cartVisits.lastVisit = Date.now();
+              this.savePersistentState();
+              logEvent("cartOpened", {timestamp:Date.now()});
+            }
+          });
+          this.setupCartCloseTracking();
+          debug("[PIC] Cart tracking setup");
+        }
+        
+        setupCartCloseTracking() {
+          const closeSelectors = '[data-cart-close],.cart-close,.drawer-close,.cart-drawer__close,[aria-label*="close"][aria-controls*="cart"],.close-cart';
+          document.querySelectorAll(closeSelectors).forEach(button => {
+            this.addCloseListener(button);
+          });
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+              if (mutation.addedNodes) {
+                mutation.addedNodes.forEach(node => {
+                  if (node.nodeType === 1) {
+                    const closeButton = node.matches(closeSelectors) ? node : node.querySelector(closeSelectors);
+                    if (closeButton) this.addCloseListener(closeButton);
+                  }
+                });
+              }
+            });
+          });
+          observer.observe(document.body, {childList:true, subtree:true});
+          debug("[PIC] Cart close tracking setup");
+        }
+        
+        addCloseListener(button) {
+          button.addEventListener('click', () => {
+            debug("[PIC] Cart/drawer closed");
+            this.cartAbandoned = true;
+            this.engagementData.cartVisits.visits.push({
+              timestamp: Date.now(),
+              type: 'cart_abandoned'
+            });
+            this.savePersistentState();
+            this.checkHesitationPatterns();
+            logEvent("cartClosed", {timestamp:Date.now()});
+          });
+        }
+        
+        trackProductImageInteractions() {
+          let imageViewCount = 0;
+          const imageSelectors = '.product__image,.product-image,.product-single__image,[data-product-image],.product-featured-img,.product-gallery__image,.product__slide,.product-image-main,[role="presentation"] img,.product__photo';
+          document.addEventListener('click', (event) => {
+            const productImage = event.target.closest(imageSelectors);
+            if (productImage) {
+              imageViewCount++;
+              debug("[PIC] Product image viewed: " + imageViewCount);
+              if (imageViewCount >= 3 && !this.events.has('detailed_image_view')) {
+                this.incrementScore('detailed_image_view', 20);
+                logEvent("productImageViewed", {count:imageViewCount});
+              }
+            }
+          });
+          document.addEventListener('mouseover', (event) => {
+            const zoomElement = event.target.closest('.zoomImg, [data-zoom-image], [data-zoom]');
+            if (zoomElement) {
+              imageViewCount++;
+              debug("[PIC] Image zoom: " + imageViewCount);
+              if (imageViewCount >= 3 && !this.events.has('detailed_image_view')) {
+                this.incrementScore('detailed_image_view', 20);
+                logEvent("imageZoom", {count:imageViewCount});
+              }
+            }
+          });
+          debug("[PIC] Product image tracking setup");
+        }
+        
+        checkHesitationPatterns() {
+          const cartData = this.engagementData.cartVisits;
+          const currentTime = Date.now();
+          const twentyFourHours = 24 * 60 * 60 * 1000;
+          const recentVisits = cartData.visits.filter(v => (currentTime - v.timestamp) < twentyFourHours);
+          const hesitationConditions = {
+            multipleAbandons: recentVisits.filter(v => v.type === 'cart_abandoned').length >= 2,
+            frequentVisits: recentVisits.length >= 3,
+            quickReturns: this.checkQuickReturns(recentVisits),
+            longTimeSpent: this.calculateCartTimeSpent(recentVisits) > 300
+          };
+          debug("[PIC] Hesitation conditions:", hesitationConditions);
+          if (hesitationConditions.multipleAbandons || (hesitationConditions.frequentVisits && hesitationConditions.quickReturns)) {
+            debug("[PIC] Hesitation pattern detected");
+            this.incrementScore('hesitation_detected', 40);
+            logEvent("hesitationPattern", {conditions:hesitationConditions});
+            this.triggerIntent();
+          }
+        }
+        
+        checkQuickReturns(visits) {
+          if (visits.length < 2) return false;
+          for (let i = 1; i < visits.length; i++) {
+            const diff = visits[i].timestamp - visits[i - 1].timestamp;
+            if (diff < 30 * 60 * 1000) return true;
+          }
+          return false;
+        }
+        
+        calculateCartTimeSpent(visits) {
+          let totalTime = 0;
+          for (let i = 0; i < visits.length - 1; i++) {
+            if (visits[i].type === 'cart_open' && visits[i + 1].type === 'cart_abandoned') {
+              totalTime += visits[i + 1].timestamp - visits[i].timestamp;
+            }
+          }
+          return totalTime / 1000;
+        }
+        
+        loadPersistentState() {
+          try {
+            const storedData = localStorage.getItem('purchaseIntentData');
+            if (storedData) {
+              const parsed = JSON.parse(storedData);
+              this.state.behavioralMetrics = {...this.state.behavioralMetrics, ...parsed.behavioralMetrics};
+              this.engagementData = {...this.engagementData, ...parsed.engagementData};
+              debug("[PIC] Loaded persistent state");
+              return parsed;
+            }
+          } catch (error) {
+            console.error("[PIC] Load state error:", error);
+          }
+          return null;
+        }
+        
+        savePersistentState() {
+          const stateToStore = {
+            behavioralMetrics: this.state.behavioralMetrics,
+            engagementData: this.engagementData
+          };
+          try {
+            localStorage.setItem('purchaseIntentData', JSON.stringify(stateToStore));
+            debug("[PIC] Saved state");
+          } catch (error) {
+            console.error("[PIC] Save state error:", error);
+          }
+        }
+        
+        getProductIdentifier(path) {
+          if (!path.includes('/products/')) return null;
+          return path.split('/products/')[1].split('?')[0];
+        }
+        
+        calculatePurchaseProbabilities() {
+          const features = this.normalizeFeatures();
+          debug("[PIC] Normalized features:", features);
+          const scores = {};
+          for (const [cls, weights] of Object.entries(this.config.weights)) {
+            scores[cls] = weights.reduce((acc, w, i) => acc + w * Object.values(features)[i], this.config.biases[cls]);
+          }
+          
+          const expSum = Object.values(scores).reduce((sum, s) => sum + Math.exp(s), 0);
+          const probabilities = {};
+          for (const [cls, score] of Object.entries(scores)) {
+            probabilities[cls] = Math.exp(score) / expSum;
+          }
+          debug("[PIC] Purchase probabilities:", probabilities);
+          return probabilities;
+        }
+        
+        normalizeFeatures() {
+          const raw = {
+            cartVisits: this.state.behavioralMetrics.cart.visits.length,
+            priceComparisons: this.state.behavioralMetrics.product.comparisons,
+            hesitationTime: this.meanHesitationTime(),
+            variantChanges: this.state.behavioralMetrics.product.variantChanges,
+            scrollDepth: this.state.behavioralMetrics.navigation.scrollDepth,
+            sessionDuration: (Date.now() - this.state.sessionStart) / 60000,
+            returnRate: this.calculateReturnRate()
+          };
+          
+          const normalized = {
+            cartVisits: Math.min(raw.cartVisits / 5, 1),
+            priceComparisons: Math.min(raw.priceComparisons / 3, 1),
+            hesitationTime: Math.min(raw.hesitationTime / 10, 1),
+            variantChanges: Math.min(raw.variantChanges / 2, 1),
+            scrollDepth: raw.scrollDepth / 100,
+            sessionDuration: Math.min(raw.sessionDuration / 10, 1),
+            returnRate: Math.min(raw.returnRate / 3, 1)
+          };
+          return normalized;
+        }
+        
+        meanHesitationTime() {
+          const periods = this.state.behavioralMetrics.temporal.hesitationPeriods;
+          return periods.length > 0 ? periods.reduce((a, b) => a + b, 0) / periods.length : 0;
+        }
+        
+        calculateReturnRate() {
+          const visits = this.state.behavioralMetrics.cart.visits;
+          const recentVisits = visits.filter(v => Date.now() - v.timestamp < 604800000);
+          return recentVisits.length / 3;
+        }
+        
+        determineIntervention() {
+          const probs = this.calculatePurchaseProbabilities();
+          debug("[PIC] Determining intervention with probabilities:", probs);
+          const thresholds = this.config.interventionThresholds;
+          
+          if (probs.willing >= thresholds.willing) {
+            debug("[PIC] Decision: Conversion Optimization");
+            return this.triggerConversionOptimization();
+          } else if (probs.hesitating >= thresholds.hesitating) {
+            debug("[PIC] Decision: Hesitation Intervention");
+            return this.triggerHesitationIntervention(probs.hesitating);
+          } else if (probs.notWilling >= thresholds.notWilling) {
+            debug("[PIC] Decision: Re-Engagement Flow");
+            return this.triggerReEngagementFlow();
+          } else {
+            debug("[PIC] Decision: Maintain Observation");
+            return this.maintainObservationState();
+          }
+        }
+        
+        triggerHesitationIntervention(score) {
+          debug("[PIC] Triggering Hesitation Intervention: " + score);
+          const interventionStrategy = {
+            level: Math.min(Math.floor(score * 3), 3),
+            actions: [
+              {threshold:0.6, action:() => this.offerContextualDiscount(score)},
+              {threshold:0.4, action:() => debug("[PIC] Showing social proof")},
+              {threshold:0.2, action:() => debug("[PIC] Offering limited stock warning")}
+            ]
+          };
+          
+          interventionStrategy.actions.find(a => score >= a.threshold)?.action();
+          logEvent("hesitationIntervention", {score});
+          return "hesitation";
+        }
+        
+        offerContextualDiscount(score) {
+          const baseDiscount = 10;
+          const dynamicBoost = Math.floor(score * 30);
+          const finalDiscount = Math.min(baseDiscount + dynamicBoost, 40);
+          debug("[PIC] Offering contextual discount: " + finalDiscount + "% for score " + score);
+          this.showPopup({type:'dynamicDiscount', discount:finalDiscount, expiration:Date.now() + 600000});
+          logEvent("contextualDiscount", {discount:finalDiscount});
+          return "conversion";
+        }
+        
+        triggerConversionOptimization() {
+          debug("[PIC] Triggering Conversion Optimization");
+          this.showPopup({type:'conversion'});
+          logEvent("conversionOptimization", {});
+          return "conversion";
+        }
+        
+        triggerReEngagementFlow() {
+          debug("[PIC] Triggering Re-Engagement Flow");
+          this.showPopup({type:'reengagement'});
+          logEvent("reengagementFlow", {});
+          return "reengagement";
+        }
+        
+        maintainObservationState() {
+          debug("[PIC] Maintaining observation state");
+          logEvent("observation", {score:this.intentScore});
+          return "observe";
+        }
+        
+        triggerIntent() {
+          if (this.popupShown || !canShowPopup()) {
+            debug("[PIC] Popup already shown or suppressed");
+            return;
+          }
+          if (this.config.showPopupCallback && typeof this.config.showPopupCallback === 'function') {
+            debug("[PIC] Triggering popup via triggerIntent");
+            this.config.showPopupCallback({});
+            this.popupShown = true;
+            logEvent("triggerIntent", {});
+          }
+        }
+        
+        showPopup(interventionData) {
+          this.popupShown = true;
+          if (this.config.showPopupCallback && typeof this.config.showPopupCallback === 'function') {
+            debug("[PIC] Calling showPopupCallback with data:", interventionData);
+            this.config.showPopupCallback(interventionData);
+          }
+        }
+        
+        cleanup() {
+          this.state.activeListeners.forEach(({event, handler}) => {
+            document.removeEventListener(event, handler);
+            debug(`[PIC] Removed listener for ${event}`);
+          });
+          this.savePersistentState();
+        }
+      }
+      
+      // Initialize the classifier with callback
+      const intentClassifier = new PurchaseIntentClassifier({
+        intentMultiplier: currentFormData.intentMultiplier || 1,
+        showPopupCallback: function(interventionData) {
+          debug("[Popup Callback] Triggered with intervention:", interventionData);
+          if (baseConditions && canShowPopup()) {
+            popupContainer.style.display = 'block';
+          }
+        }
+      });
+      
+      // Periodically evaluate intent
+      setInterval(() => {
+        if (!canShowPopup()) return;
+        debug("[Popup] Evaluating purchase intent...");
+        const decision = intentClassifier.determineIntervention();
+        debug("[Popup] Classifier decision:", decision);
+        if (decision !== "observe" && canShowPopup()) {
+          popupContainer.style.display = 'block';
+        }
+      }, 3000);
+      
+      return;
+    } 
+    // Other trigger types
+    else if (baseConditions) {
+      if (currentFormData.trigger === 'scroll') {
+        handleScrollTrigger(popupContainer);
+      } else if (currentFormData.trigger === 'timer') {
+        handleTimerTrigger(popupContainer);
+      } else {
+        popupContainer.style.display = 'block';
+      }
+    }
+    
+    // Close button handler
+    document.getElementById('popupCloseButton').addEventListener('click', () => {
+      document.getElementById('popup-container-{{ section.id }}').style.display = 'none';
+      localStorage.setItem('popupDismissedTimestamp', Date.now().toString());
+      popupDismissed = true;
+      debug("Popup closed via close button");
+      logStorage();
+    });
+  }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+  checkCurrentUrl();
+});
+
+// Fetch popup configuration
+const shopName = window.shopConfig.shopName;
+const apiUrlPopupId = `https://convert-boost-backend.vercel.app/api/get_popup_id?shopName=${shopName}`;
+const apiUrlPopupDetails = `https://convert-boost-backend.vercel.app/api/get_popup_details?shopName=${shopName}`;
+
+fetch(apiUrlPopupId)
+  .then(response => response.json())
+  .then(data => {
+    if (data.success && data.popupId) {
+      const currentPopupId = data.popupId;
+      
+      // Reset if popup ID changed
+      if (savedPopupId && savedPopupId !== currentPopupId) {
+        localStorage.removeItem('discountCode');
+        localStorage.removeItem('popupId');
+        discountCode = null;
+        savedPopupId = null;
+      }
+      
+      // Generate machine time header
+      const machineTime = getMachineTime();
+      
+      // Create headers
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+        'Machine-Time': machineTime
+      });
+      
+      fetch(apiUrlPopupDetails, {
+        method: 'GET',
+        headers: headers
+      })
+        .then(response => response.json())
+        .then(detailsData => {
+          if (detailsData.success && Array.isArray(detailsData.data) && detailsData.data.length > 0) {
+            currentFormData = detailsData.data[0];
+            savedPopupId = currentPopupId;
+            localStorage.setItem('popupId', currentPopupId);
+            
+            // Check device compatibility
+            const allowedDevice = currentFormData.devices && currentFormData.devices[0];
+            const currentDevice = getDevice();
+            if (allowedDevice !== "all" && allowedDevice !== currentDevice) {
+              debug('Device type not allowed for this popup.');
+              return;
+            }
+            
+            // Initialize sticky bar if needed
+            if (currentFormData.stickyDiscountBar === 'yes' && discountCode) {
+              initStickyBar();
+            }
+            
+            // For silent discount, trigger immediately
+            if (currentFormData.discountType === 'silent') {
+              showPopup();
+              return;
+            }
+            
+            // Handle time-based triggers
+            const scrollPercent = parseInt(currentFormData.scrollPercentage) || 0;
+            const time = parseInt(currentFormData.time) || 0;
+            
+            if (time > 0) {
+              setTimeout(showPopup, time * 1000);
+            }
+            
+            if (scrollPercent > 0) {
+              window.addEventListener('scroll', function onScroll() {
+                const scrollTop = window.scrollY || document.documentElement.scrollTop;
+                const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+                const scrolledPercent = (scrollTop / scrollHeight) * 100;
+                if (scrolledPercent >= scrollPercent) {
+                  showPopup();
+                  window.removeEventListener('scroll', onScroll);
+                }
+              });
+            }
+            
+            if (time === 0 && scrollPercent === 0) {
+              showPopup();
+            }
+          } else {
+            console.error('Invalid popup details data:', detailsData);
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching popup details:', error);
+        });
+    } else {
+      console.error('Invalid popup ID data:', data);
+    }
+  })
+  .catch(error => {
+    console.error('Error fetching popup ID:', error);
+  });
+</script>

@@ -1,0 +1,415 @@
+{% comment %}
+Convert Boost - IndexedDB Storage Wrapper
+Provides localStorage-like API using IndexedDB with automatic migration and fallback
+{% endcomment %}
+
+(function() {
+  'use strict';
+
+  const DB_NAME = 'ConvertBoostDB';
+  const DB_VERSION = 1;
+  const STORE_NAME = 'storage';
+  const MIGRATION_KEY = 'cb_storage_migrated';
+
+  // In-memory cache for synchronous access
+  let cache = {};
+  let db = null;
+  let initPromise = null;
+  let useIndexedDB = true;
+
+  // Preserve original localStorage
+  if (!window.originalLocalStorage) {
+    window.originalLocalStorage = window.localStorage;
+  }
+
+  // Initialize IndexedDB
+  function initDB() {
+    if (initPromise) return initPromise;
+
+    // Load from localStorage FIRST (synchronous, immediate)
+    loadFromLocalStorage();
+
+    initPromise = new Promise((resolve, reject) => {
+      // Check if IndexedDB is available
+      if (!window.indexedDB) {
+        console.warn('[ConvertBoost Storage] IndexedDB not available, falling back to localStorage');
+        useIndexedDB = false;
+        resolve();
+        return;
+      }
+
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onerror = () => {
+        console.warn('[ConvertBoost Storage] IndexedDB error, falling back to localStorage', request.error);
+        useIndexedDB = false;
+        resolve();
+      };
+
+      request.onsuccess = () => {
+        db = request.result;
+        console.log('[ConvertBoost Storage] IndexedDB opened successfully');
+        // Merge IndexedDB data into cache (may overwrite localStorage with newer data)
+        loadFromIndexedDB().then(() => {
+          console.log('[ConvertBoost Storage] Loaded from IndexedDB, cache size:', Object.keys(cache).length);
+          // Migrate localStorage to IndexedDB if needed
+          migrateFromLocalStorage().then(() => {
+            console.log('[ConvertBoost Storage] Initialization complete');
+            resolve();
+          });
+        });
+      };
+
+      request.onupgradeneeded = (event) => {
+        db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        }
+      };
+    });
+
+    return initPromise;
+  }
+
+  // Load data from IndexedDB into cache
+  async function loadFromIndexedDB() {
+    if (!db || !useIndexedDB) return;
+
+    return new Promise((resolve, reject) => {
+      try {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.openCursor();
+
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            cache[cursor.value.key] = cursor.value.value;
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+
+        request.onerror = () => {
+          console.warn('[ConvertBoost Storage] Failed to load from IndexedDB', request.error);
+          resolve(); // Don't reject, just continue
+        };
+      } catch (e) {
+        console.warn('[ConvertBoost Storage] Error loading from IndexedDB', e);
+        resolve();
+      }
+    });
+  }
+
+  // Load data from localStorage into cache (immediate, synchronous)
+  function loadFromLocalStorage() {
+    try {
+      const originalStorage = window.originalLocalStorage || window.localStorage;
+      for (let i = 0; i < originalStorage.length; i++) {
+        const key = originalStorage.key(i);
+        if (key) {
+          cache[key] = originalStorage.getItem(key);
+        }
+      }
+    } catch (e) {
+      console.warn('[ConvertBoost Storage] Failed to load from localStorage', e);
+    }
+  }
+
+  // Migrate data from localStorage to IndexedDB
+  async function migrateFromLocalStorage() {
+    if (!db || !useIndexedDB) return;
+
+    // Check if migration already done - check both cache and IndexedDB
+    let migrated = getItem(MIGRATION_KEY);
+    if (migrated === 'true') {
+      return;
+    }
+
+    // Also check IndexedDB directly in case cache doesn't have it
+    try {
+      const checkTransaction = db.transaction([STORE_NAME], 'readonly');
+      const checkStore = checkTransaction.objectStore(STORE_NAME);
+      const checkRequest = checkStore.get(MIGRATION_KEY);
+      await new Promise((resolve) => {
+        checkRequest.onsuccess = () => {
+          if (checkRequest.result && checkRequest.result.value === 'true') {
+            migrated = 'true';
+          }
+          resolve();
+        };
+        checkRequest.onerror = () => resolve();
+      });
+    } catch (e) {
+      // Ignore errors checking migration status
+    }
+
+    if (migrated === 'true') {
+      return;
+    }
+
+    console.log('[ConvertBoost Storage] Starting migration from localStorage to IndexedDB...');
+
+    try {
+      const transaction = db.transaction([STORE_NAME], 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+
+      // Migrate all localStorage items (use original localStorage to get source data)
+      for (let i = 0; i < window.originalLocalStorage.length; i++) {
+        const key = window.originalLocalStorage.key(i);
+        if (key) {
+          const value = window.originalLocalStorage.getItem(key);
+          await new Promise((resolve, reject) => {
+            // When using keyPath, don't pass key as second parameter
+            const request = store.put({ key, value });
+            request.onsuccess = () => resolve();
+            request.onerror = () => {
+              console.error('[ConvertBoost Storage] Migration put error for key:', key, request.error);
+              reject(request.error);
+            };
+          });
+        }
+      }
+
+      // Mark migration as complete - write directly to IndexedDB
+      await new Promise((resolve, reject) => {
+        const markRequest = store.put({ key: MIGRATION_KEY, value: 'true' });
+        markRequest.onsuccess = () => {
+          cache[MIGRATION_KEY] = 'true';
+          console.log('[ConvertBoost Storage] Migration from localStorage to IndexedDB completed');
+          resolve();
+        };
+        markRequest.onerror = () => {
+          console.error('[ConvertBoost Storage] Failed to mark migration complete', markRequest.error);
+          reject(markRequest.error);
+        };
+      });
+    } catch (e) {
+      console.warn('[ConvertBoost Storage] Migration failed', e);
+    }
+  }
+
+  // Get item from cache (synchronous)
+  function getItem(key) {
+    return cache[key] || null;
+  }
+
+  // Set item in cache, IndexedDB, and localStorage
+  async function setItem(key, value) {
+    // Update cache immediately (synchronous)
+    cache[key] = value;
+
+    // Write to localStorage (synchronous backup)
+    try {
+      const originalStorage = window.originalLocalStorage || window.localStorage;
+      originalStorage.setItem(key, value);
+    } catch (e) {
+      console.warn('[ConvertBoost Storage] Failed to write to localStorage', e);
+    }
+
+    // Write to IndexedDB (async) - wait for DB to be ready
+    if (useIndexedDB) {
+      // Ensure DB is initialized
+      if (!db) {
+        await initDB();
+      }
+      
+      if (db) {
+        try {
+          const transaction = db.transaction([STORE_NAME], 'readwrite');
+          const store = transaction.objectStore(STORE_NAME);
+          await new Promise((resolve, reject) => {
+            // When using keyPath, don't pass key as second parameter
+            const request = store.put({ key, value });
+            request.onsuccess = () => {
+              // console.log('[ConvertBoost Storage] Successfully wrote to IndexedDB:', key);
+              resolve();
+            };
+            request.onerror = () => {
+              console.error('[ConvertBoost Storage] Failed to write to IndexedDB for key:', key, request.error);
+              reject(request.error);
+            };
+          });
+        } catch (e) {
+          console.warn('[ConvertBoost Storage] Failed to write to IndexedDB', e);
+        }
+      }
+    }
+  }
+
+  // Remove item from cache, IndexedDB, and localStorage
+  async function removeItem(key) {
+    // Remove from cache immediately
+    delete cache[key];
+
+    // Remove from localStorage
+    try {
+      const originalStorage = window.originalLocalStorage || window.localStorage;
+      originalStorage.removeItem(key);
+    } catch (e) {
+      console.warn('[ConvertBoost Storage] Failed to remove from localStorage', e);
+    }
+
+    // Remove from IndexedDB
+    if (db && useIndexedDB) {
+      try {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        await new Promise((resolve, reject) => {
+          const request = store.delete(key);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+      } catch (e) {
+        console.warn('[ConvertBoost Storage] Failed to remove from IndexedDB', e);
+      }
+    }
+  }
+
+  // Get key at index (for compatibility)
+  function key(index) {
+    const keys = Object.keys(cache);
+    return keys[index] || null;
+  }
+
+  // Get length
+  function getLength() {
+    return Object.keys(cache).length;
+  }
+
+  // Clear all data
+  async function clear() {
+    cache = {};
+
+    try {
+      const originalStorage = window.originalLocalStorage || window.localStorage;
+      originalStorage.clear();
+    } catch (e) {
+      console.warn('[ConvertBoost Storage] Failed to clear localStorage', e);
+    }
+
+    if (db && useIndexedDB) {
+      try {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        await new Promise((resolve, reject) => {
+          const request = store.clear();
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+      } catch (e) {
+        console.warn('[ConvertBoost Storage] Failed to clear IndexedDB', e);
+      }
+    }
+  }
+
+  // Create localStorage-like API object
+  const storageAPI = {
+    getItem: function(key) {
+      return getItem(key);
+    },
+    setItem: function(key, value) {
+      // Fire and forget for synchronous compatibility
+      setItem(key, value).catch(err => {
+        console.warn('[ConvertBoost Storage] Async setItem error', err);
+      });
+    },
+    removeItem: function(key) {
+      // Fire and forget for synchronous compatibility
+      removeItem(key).catch(err => {
+        console.warn('[ConvertBoost Storage] Async removeItem error', err);
+      });
+    },
+    key: function(index) {
+      return key(index);
+    },
+    get length() {
+      return getLength();
+    },
+    clear: function() {
+      clear().catch(err => {
+        console.warn('[ConvertBoost Storage] Async clear error', err);
+      });
+    }
+  };
+
+  // Expose async methods for advanced usage
+  storageAPI.getItemAsync = getItem;
+  storageAPI.setItemAsync = setItem;
+  storageAPI.removeItemAsync = removeItem;
+  storageAPI.clearAsync = clear;
+  storageAPI.init = initDB;
+  
+  // Debug method to check IndexedDB contents
+  storageAPI.debugIndexedDB = async function() {
+    if (!db || !useIndexedDB) {
+      console.log('[ConvertBoost Storage] IndexedDB not available');
+      return { indexedDB: [], cache: cache };
+    }
+    
+    try {
+      const transaction = db.transaction([STORE_NAME], 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.openCursor();
+      const items = [];
+      
+      await new Promise((resolve) => {
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            items.push({ key: cursor.value.key, value: cursor.value.value });
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+        request.onerror = () => resolve();
+      });
+      
+      console.group('🔍 ConvertBoost Storage Debug');
+      console.log('📦 IndexedDB contents (' + items.length + ' items):', items);
+      console.log('💾 Cache contents (' + Object.keys(cache).length + ' items):', cache);
+      console.log('📊 Database:', db.name, 'Version:', db.version);
+      console.log('✅ Using IndexedDB:', useIndexedDB);
+      console.groupEnd();
+      
+      return { indexedDB: items, cache: cache, db: db };
+    } catch (e) {
+      console.error('[ConvertBoost Storage] Debug error:', e);
+      return { error: e.message };
+    }
+  };
+  
+  // Quick check method
+  storageAPI.check = function() {
+    console.log('Quick check - run: window.cbStorage.debugIndexedDB() for full details');
+    console.log('Cache keys:', Object.keys(cache));
+    console.log('Cache size:', Object.keys(cache).length);
+    return {
+      cacheKeys: Object.keys(cache),
+      cacheSize: Object.keys(cache).length,
+      usingIndexedDB: useIndexedDB,
+      dbReady: !!db
+    };
+  };
+
+  // Replace localStorage with our wrapper
+  Object.defineProperty(window, 'localStorage', {
+    value: storageAPI,
+    writable: false,
+    configurable: false
+  });
+
+  // Expose storage wrapper globally for debugging
+  window.cbStorage = storageAPI;
+
+  // Initialize on load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      initDB();
+    });
+  } else {
+    initDB();
+  }
+})();

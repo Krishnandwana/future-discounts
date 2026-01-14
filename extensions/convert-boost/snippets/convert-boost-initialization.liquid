@@ -1,0 +1,423 @@
+{% comment %}
+Convert Boost - Simplified Initialization Component
+New approach using metafields and validation backend
+{% endcomment %}
+
+// Global state variables are declared in convert-boost-core-functions.liquid
+// currentFormData, discountCode, savedPopupId are available globally
+
+// Initialize logger
+const initLogger = {
+  error: (msg, data) => console.error(`[Init] ${msg}`, data || ''),
+  warn: (msg, data) => console.warn(`[Init] ${msg}`, data || '')
+};
+
+// Function to show popup after validation passes
+function displayValidatedPopup(popupConfig) {
+  
+  // Store current form data globally
+  currentFormData = popupConfig;
+  
+  // Render the popup HTML
+  renderPopup(popupConfig);
+  
+  // Get popup container - use querySelector to find any popup-container-* element
+  let popupContainer = document.querySelector('[id^="popup-container-"]');
+  if (!popupContainer) {
+    // Try with a fallback ID
+    popupContainer = document.getElementById('popup-container-convertboost');
+    if (!popupContainer) {
+      initLogger.error('Popup container not found - tried both section ID and fallback');
+      // Log all elements with popup-container in their ID
+      const allContainers = document.querySelectorAll('[id*="popup-container"]');
+      initLogger.error('Found containers:', Array.from(allContainers).map(el => el.id));
+      return;
+    }
+  }
+
+  // Function to mark popup as shown (currently no-op since we only track dismissals)
+  function markPopupShown() {
+    // No-op: We don't track "shown" state anymore
+    // Popup will keep showing until dismissed
+  }
+
+  // Handle different trigger types
+  if (popupConfig.trigger === 'scroll') {
+    handleScrollTrigger(popupContainer, popupConfig, markPopupShown);
+  } else if (popupConfig.trigger === 'timer') {
+    handleTimerTrigger(popupContainer, popupConfig, markPopupShown);
+  } else {
+    // Default: show immediately with smooth animation
+    popupContainer.style.display = 'flex';
+    popupContainer.style.alignItems = 'center';
+    popupContainer.style.justifyContent = 'center';
+    popupContainer.style.animation = 'fadeIn 0.3s ease-out';
+    markPopupShown();
+  }
+
+  // Add close button handler
+  const closeButton = document.getElementById('popupCloseButton');
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      // Smooth fade out animation
+      popupContainer.style.animation = 'fadeOut 0.2s ease-out';
+      setTimeout(() => {
+        popupContainer.style.display = 'none';
+      }, 200);
+      // Store popup dismissal with popup ID - this popup will NEVER show again
+      const dismissalKey = `popup_dismissal_cb_${popupConfig.id}`;
+      localStorage.setItem(dismissalKey, 'true');
+      // console.log("Popup dismissed by user - will NEVER show again", { popupId: popupConfig.id });
+    });
+  }
+}
+
+// Handle scroll trigger
+function handleScrollTrigger(container, config, onShow) {
+  const scrollPercent = parseInt(config.scrollPercentage) || 50;
+  
+  window.addEventListener('scroll', function onScroll() {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const scrolledPercent = (scrollTop / scrollHeight) * 100;
+    
+    if (scrolledPercent >= scrollPercent) {
+      container.style.display = 'block';
+      if (onShow) onShow();
+      window.removeEventListener('scroll', onScroll);
+      //(`Popup triggered by scroll at ${scrolledPercent.toFixed(1)}%`);
+    }
+  });
+}
+
+// Handle timer trigger
+function handleTimerTrigger(container, config, onShow) {
+  const time = parseInt(config.time) || 3;
+  
+  setTimeout(() => {
+    container.style.display = 'block';
+    if (onShow) onShow();
+    //(`Popup triggered by timer after ${time} seconds`);
+  }, time * 1000);
+}
+
+
+// Main initialization function
+async function initializeConvertBoost() {
+  try {
+    // console.log('🚀 Starting Convert Boost initialization');
+
+    // FIRST: Check if sticky bar config exists (discount already claimed)
+    const savedStickyConfig = localStorage.getItem('stickyBarConfig');
+    if (savedStickyConfig) {
+      console.log('✋ Sticky bar config found - user already has discount, skipping popup initialization');
+      return; // Don't initialize popup at all
+    }
+
+    // Get shop configuration
+    const shopName = window.shopConfig ? window.shopConfig.shopName : '{{ shop.domain }}';
+    // console.log('Shop configuration', {
+    //   shopName,
+    //   shopConfig: window.shopConfig,
+    //   shopDomain: '{{ shop.domain }}'
+    // });
+
+    if (!shopName) {
+      initLogger.error('Shop name not found in configuration, using domain fallback');
+    }
+
+    // Read popup configuration from metafields - now supports multiple popups
+    const billingStatusRaw = {{ shop.metafields.convertboost.billing_status | json }};
+
+    // console.log('🔍 Metafield data', {
+    //   activePopupIdsRaw,
+    //   billingStatus: billingStatusRaw,
+    //   shopName
+    // });
+
+    // Parse billing status
+    let canUseService = true;
+    if (billingStatusRaw && typeof billingStatusRaw === 'object') {
+      canUseService = billingStatusRaw.canUseService !== false;
+    } else if (typeof billingStatusRaw === 'string' && billingStatusRaw !== "null" && billingStatusRaw !== "") {
+      try {
+        const billingData = JSON.parse(billingStatusRaw);
+        canUseService = billingData.canUseService !== false;
+      } catch (e) {
+        initLogger.warn('Could not parse billing status, defaulting to allow service');
+      }
+    }
+
+    if (!canUseService) {
+      // console.log('Service access denied based on billing status');
+      return;
+    }
+
+    // Get all popup configurations from metafield array
+    const popupsDataRaw = {{ shop.metafields.convertboost.popups_data | json }};
+    let allPopups = [];
+
+    // console.log('📦 Raw popups_data from metafield', {
+    //   type: typeof popupsDataRaw,
+    //   value: popupsDataRaw,
+    //   isNull: popupsDataRaw === null,
+    //   isEmpty: popupsDataRaw === ""
+    // });
+
+    if (popupsDataRaw && popupsDataRaw !== null && popupsDataRaw !== "") {
+      try {
+        // If it's already an object/array (from | json filter), use it directly
+        if (typeof popupsDataRaw === 'object') {
+          allPopups = Array.isArray(popupsDataRaw) ? popupsDataRaw : [popupsDataRaw];
+        } else {
+          // Otherwise, parse as JSON string
+          allPopups = JSON.parse(popupsDataRaw);
+        }
+        // console.log('✅ Popup configurations loaded from popups_data metafield', {
+        //   count: allPopups.length,
+        //   ids: allPopups.map(p => p.id),
+        //   popups: allPopups
+        // });
+      } catch (error) {
+        initLogger.error('❌ Failed to parse popups_data metafield', { error: error.message });
+        return;
+      }
+    } else {
+      // console.log('⚠️ No popups_data metafield found - raw value:', popupsDataRaw);
+      initLogger.warn('⚠️ No popups_data metafield found');
+      return;
+    }
+
+    const activePopups = allPopups.filter(popup => popup.status === true);
+
+    if (activePopups.length === 0) {
+      initLogger.warn('⚠️ No active popups found in metafields', {
+        hint: 'Make sure at least one popup is created and activated in the app admin'
+      });
+      return;
+    }
+
+    // Filter to get eligible popups (check device rules, schedule rules, dismissals)
+    const eligiblePopups = [];
+
+    for (const popup of activePopups) {
+      // Check if popup was dismissed by user
+      const popupDismissalKey = `popup_dismissal_cb_${popup.id}`;
+      const popupWasDismissed = localStorage.getItem(popupDismissalKey) === 'true';
+
+      if (popupWasDismissed) {
+        // console.log(`Popup ${popup.id} was dismissed, skipping`);
+        continue;
+      }
+
+      // Check device rules
+      const originalFormData = currentFormData;
+      currentFormData = popup;
+      const deviceCheckPassed = checkDeviceRules();
+      currentFormData = originalFormData;
+
+      if (!deviceCheckPassed) {
+        // console.log(`Popup ${popup.id} failed device check, skipping`);
+        continue;
+      }
+
+      // Check schedule rules
+      currentFormData = popup;
+      const scheduleCheckPassed = checkTimeRules();
+      currentFormData = originalFormData;
+
+      if (!scheduleCheckPassed) {
+        // console.log(`Popup ${popup.id} failed schedule check, skipping`);
+        continue;
+      }
+
+      // Validate location rules with backend
+      const validation = await validatePopupWithBackend(popup);
+
+      if (!validation.shouldShow) {
+        // console.log(`Popup ${popup.id} failed location validation, skipping`);
+        continue;
+      }
+
+      // Add eligible popup with validation data
+      eligiblePopups.push({
+        popup,
+        validation
+      });
+    }
+
+    // console.log('✅ Eligible popups after all checks', {
+    //   total: allPopups.length,
+    //   eligible: eligiblePopups.length,
+    //   eligiblePopups: eligiblePopups
+    // });
+
+    if (eligiblePopups.length === 0) {
+      // console.log('No eligible popups to display');
+      return;
+    }
+
+    // Enhanced popup selection: Prioritize location-specific popups
+    // Score each popup based on location specificity and priority
+    const scoredPopups = eligiblePopups.map(({ popup, validation }, index) => {
+      let score = 0;
+      
+      // Base score from updatedAt (newer = higher priority)
+      // Assuming popups are already sorted by updatedAt DESC, give higher score to earlier ones
+      const indexScore = (eligiblePopups.length - index) * 10;
+      score += indexScore;
+      
+      // Location specificity scoring (more specific = higher priority)
+      if (popup.discountLocation === 'include') {
+        // City-level targeting is most specific
+        if (popup.locationType === 'city' && popup.selectedCity && popup.selectedCity.length > 0) {
+          score += 100;
+          // More cities = less specific, so subtract
+          score -= popup.selectedCity.length;
+        }
+        // State-level targeting
+        else if (popup.locationType === 'state' && popup.selectedState && popup.selectedState.length > 0) {
+          score += 50;
+          score -= popup.selectedState.length;
+        }
+        // Country-level targeting
+        else if (popup.locationType === 'country' && popup.selectedCountries && popup.selectedCountries.length > 0) {
+          score += 25;
+          score -= popup.selectedCountries.length;
+        }
+      } else if (popup.discountLocation === 'exclude') {
+        // Exclude rules are less specific (show to everyone except X)
+        score += 5;
+      } else {
+        // Everywhere (no location rules) - lowest priority
+        score += 1;
+      }
+      
+      // Discount value priority (higher discount = higher priority, optional)
+      if (popup.discountValue) {
+        score += popup.discountValue * 0.1; // Small boost for higher discounts
+      }
+      
+      return {
+        popup,
+        validation,
+        score
+      };
+    });
+    
+    // Sort by score (highest first)
+    scoredPopups.sort((a, b) => b.score - a.score);
+    
+    // Select the highest scoring popup (most location-specific)
+    const selectedPopupData = scoredPopups[0];
+    const popupConfig = selectedPopupData.popup;
+    const validation = selectedPopupData.validation;
+    
+    // console.log('🎯 Popup selection scores', {
+    //   selected: {
+    //     id: popupConfig.id,
+    //     score: selectedPopupData.score,
+    //     locationType: popupConfig.locationType,
+    //     discountValue: popupConfig.discountValue
+    //   },
+    //   allScores: scoredPopups.map(p => ({
+    //     id: p.popup.id,
+    //     score: p.score,
+    //     locationType: p.popup.locationType
+    //   }))
+    // });
+
+    // console.log('🎯 Selected popup to display', {
+    //   id: popupConfig.id,
+    //   discountName: popupConfig.discountName,
+    //   locationRules: popupConfig.locationRules,
+    //   discountLocation: popupConfig.discountLocation,
+    //   locationType: popupConfig.locationType,
+    //   hasCompleteData: !!(popupConfig.heading && popupConfig.description),
+    //   fullConfig: popupConfig
+    // });
+
+    // All validation already done above, we have a selected popup to show
+
+    // Track successful popup view
+    await trackPopupEvent('view', popupConfig, {
+      location: validation.userLocation
+    });
+
+    // Check if this is a silent discount - handle differently
+    if (popupConfig.discountType === 'silent') {
+      console.log('Silent discount detected - creating discount automatically');
+      
+      // Create params for silent discount
+      const params = new URLSearchParams();
+      params.append('popupConfigId', popupConfig.id);
+      params.append('shopName', window.shopConfig ? window.shopConfig.shopName : '{{ shop.domain }}');
+      
+      // Store current form data for the silent discount function
+      currentFormData = popupConfig;
+      
+      // Trigger silent discount automatically
+      triggerSilentDiscount(params);
+    } else {
+      // Display the popup for normal discounts
+      // console.log('🎯 About to display popup - all checks passed');
+      displayValidatedPopup(popupConfig);
+    }
+
+  } catch (error) {
+    initLogger.error('Error during Convert Boost initialization', {
+      error: error.message,
+      stack: error.stack
+    });
+  }
+  
+  // Note: Sticky bar is handled separately by checkAndShowStickyBar()
+}
+
+// Function to always check and show sticky bar if config exists
+function checkAndShowStickyBar() {
+  try {
+    const savedStickyConfig = localStorage.getItem('stickyBarConfig');
+    if (savedStickyConfig) {
+      console.log('Found sticky bar config, always showing discount');
+      
+      // Create sticky bar element if it doesn't exist
+      let stickyBar = document.getElementById('stickyDiscountBar');
+      if (!stickyBar) {
+        console.log('Creating sticky bar element');
+        stickyBar = document.createElement('div');
+        stickyBar.id = 'stickyDiscountBar';
+        stickyBar.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          z-index: 10000;
+          display: none;
+          background: transparent;
+        `;
+        document.body.appendChild(stickyBar);
+      }
+      
+      initStickyBar();
+    }
+  } catch (stickyError) {
+    console.error('Error initializing sticky bar', stickyError.message);
+  }
+}
+
+// Start initialization when DOM is ready
+// console.log('🎯 Checking DOM state for initialization...');
+if (document.readyState === 'loading') {
+  // console.log('🕑 DOM still loading, waiting for DOMContentLoaded event');
+  document.addEventListener('DOMContentLoaded', () => {
+    // console.log('✅ DOMContentLoaded fired, starting initialization');
+    initializeConvertBoost();
+    checkAndShowStickyBar(); // Always check for sticky bar
+  });
+} else {
+  // DOM is already ready
+  // console.log('✅ DOM already loaded, starting initialization immediately');
+  initializeConvertBoost();
+  checkAndShowStickyBar(); // Always check for sticky bar
+}

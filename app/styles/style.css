@@ -1,0 +1,110 @@
+.no-top-border {
+    border-top: none !important;
+}
+
+/* Enhanced card styling for better visual appearance */
+.card-container {
+    padding: 1.5rem;
+    background: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: box-shadow 0.2s ease-in-out;
+}
+
+.card-container:hover {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Smooth transitions for all interactive elements */
+* {
+    transition: all 0.2s ease-in-out;
+}
+
+/* Better spacing for form sections */
+.form-section {
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+/* Improved visual hierarchy */
+.page-header {
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    border-bottom: 1px solid #e1e3e5;
+}
+
+/* Enhanced preview area */
+.preview-container {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 2rem;
+    min-height: 500px;
+}
+
+/* Loading states */
+.loading-overlay {
+    backdrop-filter: blur(2px);
+    background: rgba(255, 255, 255, 0.8);
+}
+
+/* Performance improvements */
+.gpu-accelerated {
+    transform: translateZ(0);
+    will-change: transform;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+    .card-container {
+        padding: 1rem;
+        margin: 0.5rem;
+    }
+    
+    .form-section {
+        padding: 1rem;
+    }
+}
+
+/* Toggle Switch Tooltip */
+.switch-container {
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.switch-with-tooltip:hover .switch-tooltip {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.switch-tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: fixed;
+    padding: 10px 14px;
+    background-color: #202223;
+    color: #fff;
+    border-radius: 8px;
+    font-size: 13px;
+    white-space: normal;
+    pointer-events: none;
+    z-index: 99999;
+    transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+    max-width: 280px;
+    min-width: 200px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    line-height: 1.5;
+    word-wrap: break-word;
+    transform: translate(-50%, -100%);
+    margin-top: -8px;
+}
+
+.switch-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: #202223;
+}

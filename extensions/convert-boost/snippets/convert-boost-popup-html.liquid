@@ -1,0 +1,21 @@
+{% comment %}
+Convert Boost - HTML Structure Component
+Contains the popup container and sticky discount bar HTML structure
+{% endcomment %}
+
+<!-- Sticky Discount Bar -->
+<div class="top-bar" id="stickyDiscountBar" style="display:none;"></div>
+
+<!-- Popup Container -->
+<div id="popup-container-{{ section.id }}" class="popup-container popup-container-convertboost" style="display:none;">
+  <div id="popup-overlay-{{ section.id }}" class="popup-overlay"></div>
+  <div id="popup-content-{{ section.id }}" class="popup-content"></div>
+</div>
+
+<!-- Fallback Popup Container (in case section.id is not available) -->
+{% if section.id == blank %}
+<div id="popup-container-convertboost" class="popup-container" style="display:none;">
+  <div id="popup-overlay-convertboost" class="popup-overlay"></div>
+  <div id="popup-content-convertboost" class="popup-content"></div>
+</div>
+{% endif %}
