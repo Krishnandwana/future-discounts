@@ -12,3 +12,44 @@ Contains all the core functionality and initialization logic
 {% render 'convert-boost-popup-validation' %}
 {% render 'convert-boost-initialization' %}
 </script>
+
+{% comment %}
+Hesitation Scoring System - Load calculator and tracker
+For development: Uses local asset files (no cache issues)
+For production: Can use CDN via metafield override
+{% endcomment %}
+{% if shop.metafields.convertboost.hesitation_cdn_url %}
+  {% comment %} Use CDN if metafield is set (production) {% endcomment %}
+  {% assign hesitationCdnUrl = shop.metafields.convertboost.hesitation_cdn_url %}
+  {% assign hesitationScoreUrl = hesitationCdnUrl | append: '/hesitation-score.js' %}
+  {% assign hesitationTrackerUrl = hesitationCdnUrl | append: '/hesitation-tracker.js' %}
+{% else %}
+  {% comment %} Use local assets for development (no cache) {% endcomment %}
+  {% assign hesitationScoreUrl = 'hesitation-score.js' | asset_url %}
+  {% assign hesitationTrackerUrl = 'hesitation-tracker.js' | asset_url %}
+{% endif %}
+
+<script>
+  (function() {
+    function loadScript(src, callback) {
+      var script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.defer = true;
+      if (callback) {
+        script.onload = callback;
+        script.onerror = function() {
+          console.warn('[ConvertBoost] Failed to load script:', src);
+        };
+      }
+      document.head.appendChild(script);
+    }
+
+    // Load hesitation score calculator first, then tracker
+    loadScript('{{ hesitationScoreUrl }}', function() {
+      loadScript('{{ hesitationTrackerUrl }}', function() {
+        console.log('[ConvertBoost] Hesitation tracking system loaded from:', '{{ shop.metafields.convertboost.hesitation_cdn_url | default: "local assets" }}');
+      });
+    });
+  })();
+</script>

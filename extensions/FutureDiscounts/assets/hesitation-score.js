@@ -30,7 +30,8 @@
     },
     navigation: {
       backAndForthLoops: 7,
-      exitIntent: 4
+      exitIntent: 4,
+      scrollDepth: 3
     }
   };
 
@@ -38,7 +39,7 @@
     temporal: 25,
     repetition: 35,
     optimization: 25,
-    navigation: 15
+    navigation: 18  // Increased from 15 to accommodate scroll depth
   };
 
   function clamp(value, min, max) {
@@ -65,6 +66,19 @@
 
   function booleanEvidence(value) {
     return value ? 1 : 0;
+  }
+
+  function scrollDepthEvidence(depth) {
+    // Depth is 0-100 (percentage)
+    // Higher depth indicates more engagement but also potential hesitation
+    // 0-30%: Low engagement (0 evidence)
+    // 30-60%: Moderate engagement (0.5 evidence)
+    // 60-90%: High engagement (0.75 evidence)
+    // 90-100%: Very high engagement (1.0 evidence)
+    if (depth >= 90) return 1.0;
+    if (depth >= 60) return 0.75;
+    if (depth >= 30) return 0.5;
+    return 0;
   }
 
   function resolveArray(value) {
@@ -166,6 +180,7 @@
       4
     );
     var exitIntentRaw = booleanEvidence(navigation.exitIntent || false);
+    var scrollDepth = scrollDepthEvidence(navigation.scrollDepth || 0);
 
     var evidence = {
       temporal: {
@@ -182,7 +197,8 @@
       },
       navigation: {
         backAndForthLoops: backAndForthLoops,
-        exitIntent: exitIntentRaw
+        exitIntent: exitIntentRaw,
+        scrollDepth: scrollDepth
       }
     };
 
@@ -199,7 +215,9 @@
       WEIGHTS.optimization.couponSeeking * evidence.optimization.couponSeeking;
     var navigationRawWithoutExit =
       WEIGHTS.navigation.backAndForthLoops *
-      evidence.navigation.backAndForthLoops;
+      evidence.navigation.backAndForthLoops +
+      WEIGHTS.navigation.scrollDepth *
+      evidence.navigation.scrollDepth;
 
     var temporalCapped = Math.min(temporalRaw, CAPS.temporal);
     var repetitionCapped = Math.min(repetitionRaw, CAPS.repetition);
