@@ -42,6 +42,8 @@
 
   function pruneEvents(events, windowMs) {
     var now = nowMs();
+    // Keep events from the last 2x the rolling window (60 minutes) to ensure we don't lose recent events
+    // The actual scoring window is 30 minutes, but we keep 60 minutes of data
     return events.filter(function (event) {
       return now - event.ts <= windowMs * 2;
     });
@@ -73,7 +75,9 @@
       cartProgressed: false,
       pageHistory: [],
       maxScrollDepth: 0,
-      lastScoreUpdate: 0
+      lastScoreUpdate: 0,
+      userLeftSite: false,
+      lastPageLeaveTime: null
     };
 
     var updateScoreCallback = null;
@@ -454,9 +458,27 @@
       document.addEventListener("focusin", handleFocusIn);
       document.addEventListener("mouseleave", trackExitIntent);
       document.addEventListener("scroll", trackScrollDepth, { passive: true });
+      // Track when user leaves the site
       window.addEventListener("beforeunload", function () {
         closeCart("page_leave");
+        state.userLeftSite = true;
+        state.lastPageLeaveTime = nowMs();
         updateScoreInStorage();
+      });
+      
+      // Also track pagehide (more reliable than beforeunload)
+      window.addEventListener("pagehide", function () {
+        state.userLeftSite = true;
+        state.lastPageLeaveTime = nowMs();
+      });
+      
+      // Reset "left site" flag when user comes back (visibility change)
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) {
+          // User came back to the page
+          state.userLeftSite = false;
+          state.lastPageLeaveTime = null;
+        }
       });
       registerHistoryListeners();
       handleNavigationChange();
@@ -483,11 +505,22 @@
     }
 
     function eventsInWindow(type, now, windowMs) {
-      return state.events.filter(function (event) {
+      var filtered = state.events.filter(function (event) {
         return (
           event.type === type && now - event.ts <= windowMs
         );
       });
+      // Debug for variant switches
+      if (type === "variant_switch") {
+        var allOfType = state.events.filter(function(e) { return e.type === type; });
+        console.log('[HesitationTracker] 🔍 eventsInWindow for variant_switch:', {
+          totalInState: allOfType.length,
+          inWindow: filtered.length,
+          windowSeconds: windowMs/1000,
+          eventAges: filtered.map(function(e) { return ((now - e.ts)/1000).toFixed(1) + 's ago'; })
+        });
+      }
+      return filtered;
     }
 
     function getSignals(now) {
@@ -496,9 +529,21 @@
       var recentEvents = state.events.filter(function (event) {
         return nowTime - event.ts <= windowMs;
       });
-      var lastEventTs = recentEvents.length
-        ? recentEvents[recentEvents.length - 1].ts
-        : 0;
+      // Find the most recent meaningful event (not just any event)
+      // Meaningful events are those that contribute to hesitation
+      var meaningfulEventTypes = [
+        "cart_open", "add_to_cart", "cart_dwell", "variant_switch",
+        "coupon_seek", "back_and_forth_loop", "exit_intent", "micro_pause",
+        "pdp_view", "intent_info_open"
+      ];
+      var lastMeaningfulEvent = recentEvents
+        .filter(function(event) {
+          return meaningfulEventTypes.indexOf(event.type) !== -1;
+        })
+        .sort(function(a, b) {
+          return b.ts - a.ts;
+        })[0];
+      var lastEventTs = lastMeaningfulEvent ? lastMeaningfulEvent.ts : 0;
 
       var microPauseSeconds = eventsInWindow("micro_pause", nowTime, windowMs).map(
         function (event) {
@@ -544,13 +589,17 @@
         .map(function (event) {
           return event.ts;
         });
-      var variantSwitchTs = eventsInWindow(
-        "variant_switch",
-        nowTime,
-        windowMs
-      ).map(function (event) {
+      // Get variant switch events
+      var variantSwitchEvents = eventsInWindow("variant_switch", nowTime, windowMs);
+      var variantSwitchTs = variantSwitchEvents.map(function (event) {
         return event.ts;
       });
+      
+      // ALWAYS log variant switch count for debugging
+      var allVariantSwitches = state.events.filter(function(event) {
+        return event.type === "variant_switch";
+      });
+      console.log('[HesitationTracker] 🔍 Variant Switches - Total in state:', allVariantSwitches.length, '| In window:', variantSwitchEvents.length, '| Will be counted:', variantSwitchTs.length);
       var couponSeekTs = state.events
         .filter(function (event) {
           return (
@@ -561,6 +610,10 @@
         .map(function (event) {
           return event.ts;
         });
+      
+      // Get cart quantity change events
+      var cartQuantityChangeEvents = eventsInWindow("cart_quantity_change", nowTime, windowMs);
+      var cartQuantityChangesCount = cartQuantityChangeEvents.length;
       var loopTs = eventsInWindow(
         "back_and_forth_loop",
         nowTime,
@@ -593,15 +646,21 @@
         },
         repetition: {
           cartRevisitsTimestamps: cartOpenTs,
-          cartVisitTimestamps: cartOpenTs
+          cartVisitTimestamps: cartOpenTs,
+          cartRevisitsCount: cartOpenTs.length  // Count for scorer
         },
         optimization: {
           variantSwitchTimestamps: variantSwitchTs,
-          couponSeekTimestamps: couponSeekTs
+          variantSwitches: variantSwitchTs.length,  // Count for scorer
+          couponSeekTimestamps: couponSeekTs,
+          couponSeeking: couponSeekTs.length > 0,  // Boolean for scorer
+          cartQuantityChanges: cartQuantityChangesCount  // Count for scorer
         },
         navigation: {
           loopTimestamps: loopTs,
           exitIntentTimestamps: exitIntentTs,
+          backAndForthLoops: loopTs.length,  // Count for scorer
+          exitIntent: exitIntentTs.length > 0,  // Boolean for scorer
           scrollDepth: maxScrollDepth
         },
         engagement: {
@@ -611,9 +670,23 @@
           intentInfoOpenTimestamps: infoOpenTs
         },
         secondsSinceLastSignal: lastEventTs ? (nowTime - lastEventTs) / 1000 : 0,
-        nowMs: nowTime
+        nowMs: nowTime,
+        userLeftSite: state.userLeftSite  // Pass flag to scorer
       };
       signals.engagementGateMet = computeEngagementGate(signals);
+      
+      // Debug logging for signal counts
+            console.log('[HesitationTracker] 🔍 Signal Counts:', {
+              variantSwitches: signals.optimization.variantSwitches,
+              cartQuantityChanges: signals.optimization.cartQuantityChanges || 0,
+              cartRevisits: signals.repetition.cartRevisitsCount,
+              microPauses: signals.temporal.microPauseSeconds.length,
+              cartDwell: signals.temporal.cartDwellSeconds,
+              loops: signals.navigation.backAndForthLoops,
+              exitIntent: signals.navigation.exitIntent,
+              scrollDepth: signals.navigation.scrollDepth
+            });
+      
       return signals;
     }
 
