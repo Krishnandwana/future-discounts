@@ -27,12 +27,12 @@
     optimization: {
       variantSwitches: 12,
       couponSeeking: 9,
-      cartQuantityChanges: 15  // High weight - changing cart quantity is strong hesitation
+      cartQuantityChanges: 10  // Moderate weight - changing cart quantity indicates hesitation
     },
     navigation: {
       backAndForthLoops: 7,
       exitIntent: 4,
-      scrollDepth: 8  // Increased weight - deep scrolling is strong hesitation signal
+      scrollDepth: 3  // Weak indicator - deep scrolling is supplementary signal
     }
   };
 
@@ -69,14 +69,18 @@
     return value ? 1 : 0;
   }
 
-  function scrollDepthEvidence(depth) {
+  function scrollDepthEvidence(depth, hasConflictSignal) {
     // Depth is 0-100 (percentage)
-    // Deep scrolling indicates strong hesitation - user is exploring options
+    // Scroll depth is engagement/information consumption, not uniquely hesitation
+    // It only becomes hesitation when paired with conflict signals
+    // (variantSwitches, cartDwell, cartRevisits, backAndForthLoops)
+    if (!hasConflictSignal) return 0;  // No contribution without conflict
+    
     // 0-20%: Low engagement (0 evidence)
     // 20-50%: Moderate engagement (0.4 evidence)
     // 50-70%: High engagement (0.7 evidence)
     // 70-85%: Very high engagement (0.9 evidence)
-    // 85-100%: Maximum hesitation - deep exploration (1.0 evidence)
+    // 85-100%: Deep exploration (1.0 evidence)
     if (depth >= 85) return 1.0;
     if (depth >= 70) return 0.9;
     if (depth >= 50) return 0.7;
@@ -90,23 +94,21 @@
     return [value];
   }
 
-  function applyDecay(rawH, secondsSinceLastSignal, tauSeconds, baseRawH, userLeftSite) {
-    // NO DECAY while user is actively on the site
-    // Decay should only apply if user has left the site (userLeftSite = true)
-    // This rewards users who stay and browse, rather than penalizing them
-    if (!userLeftSite) {
-      return rawH; // No decay while browsing
+  function applyDecay(rawH, secondsSinceLastSignal, tauSeconds, baseRawH) {
+    // Decay applies when user is INACTIVE (no meaningful actions)
+    // This prevents "tab left open / phone call / interruption" from keeping high score
+    // Decay starts after 2 minutes of inactivity, regardless of whether they left the site
+    
+    var INACTIVITY_GRACE_PERIOD = 120; // 2 minutes grace period before decay starts
+    
+    if (!secondsSinceLastSignal || secondsSinceLastSignal <= INACTIVITY_GRACE_PERIOD) {
+      return rawH; // No decay during active browsing or short inactivity
     }
     
-    // Only apply decay if user has left AND there's been no activity for at least 5 minutes
-    // This prevents immediate decay when user briefly switches tabs
-    if (!secondsSinceLastSignal || secondsSinceLastSignal <= 300) return rawH;
-    
-    // Apply decay only to the time beyond 5 minutes after leaving
-    var decayTime = secondsSinceLastSignal - 300;
-    // Use a moderate half-life (10 minutes) for decay after leaving
-    var adjustedTau = tauSeconds * 2; // 10 minutes half-life
-    var decayed = rawH * Math.exp(-decayTime / adjustedTau);
+    // Apply decay only to time beyond grace period
+    var decayTime = secondsSinceLastSignal - INACTIVITY_GRACE_PERIOD;
+    // Use tau for half-life calculation (default 5 minutes = 300s)
+    var decayed = rawH * Math.exp(-decayTime / tauSeconds);
     
     // Set a minimum floor - never let score decay below 10% of original base
     var minRawH = (baseRawH || rawH) * 0.1;
@@ -116,18 +118,15 @@
   function computeEngagementGate(signals) {
     if (!signals || !signals.engagement) return false;
     var eng = signals.engagement;
-    var nav = signals.navigation || {};
     
-    // Deep scrolling (80%+) indicates strong engagement/hesitation
-    var deepScroll = (nav.scrollDepth || 0) >= 80;
-    
+    // Gate requires explicit purchase intent signals, NOT just scrolling
+    // Deep scroll is engagement/info consumption, not purchase intent
     return Boolean(
       (eng.cartOpenedTimestamps && eng.cartOpenedTimestamps.length > 0) ||
         (eng.addToCartTimestamps && eng.addToCartTimestamps.length > 0) ||
         (eng.pdpViewTimestamps && eng.pdpViewTimestamps.length >= 2) ||
         (eng.intentInfoOpenTimestamps &&
-          eng.intentInfoOpenTimestamps.length > 0) ||
-        deepScroll  // Deep scrolling counts as engagement
+          eng.intentInfoOpenTimestamps.length > 0)
     );
   }
 
@@ -222,7 +221,16 @@
       4
     );
     var exitIntentRaw = booleanEvidence(navigation.exitIntent || false);
-    var scrollDepth = scrollDepthEvidence(navigation.scrollDepth || 0);
+    
+    // Scroll depth only contributes if there's at least one conflict signal
+    // Conflict signals indicate decision-making struggle, not just reading
+    var hasConflictSignal = (
+      variantSwitchCount > 0 ||
+      (temporal.cartDwellSeconds || 0) > 0 ||
+      (repetition.cartRevisitsCount || 0) > 0 ||
+      (navigation.backAndForthLoops || 0) > 0
+    );
+    var scrollDepth = scrollDepthEvidence(navigation.scrollDepth || 0, hasConflictSignal);
 
     var evidence = {
       temporal: {
@@ -267,14 +275,6 @@
     var temporalCapped = Math.min(temporalRaw, CAPS.temporal);
     var repetitionCapped = Math.min(repetitionRaw, CAPS.repetition);
     var optimizationCapped = Math.min(optimizationRaw, CAPS.optimization);
-    
-    // Debug logging for category scores
-    console.log('[HesitationScore] 📊 Category Scores:', {
-      temporal: temporalCapped.toFixed(2) + '/' + CAPS.temporal,
-      repetition: repetitionCapped.toFixed(2) + '/' + CAPS.repetition,
-      optimization: optimizationCapped.toFixed(2) + '/' + CAPS.optimization + ' (variants: ' + variantSwitchCount + ')',
-      navigation: '0.00/' + CAPS.navigation
-    });
 
     var rawHWithoutExit =
       temporalCapped + repetitionCapped + optimizationCapped;
@@ -286,6 +286,14 @@
 
     var navigationRaw = navigationRawWithoutExit + exitIntent;
     var navigationCapped = Math.min(navigationRaw, CAPS.navigation);
+    
+    // Debug logging for category scores (after all are computed)
+    console.log('[HesitationScore] 📊 Category Scores:', {
+      temporal: temporalCapped.toFixed(2) + '/' + CAPS.temporal,
+      repetition: repetitionCapped.toFixed(2) + '/' + CAPS.repetition,
+      optimization: optimizationCapped.toFixed(2) + '/' + CAPS.optimization + ' (variants: ' + variantSwitchCount + ')',
+      navigation: navigationCapped.toFixed(2) + '/' + CAPS.navigation + ' (scroll: ' + (navigation.scrollDepth || 0) + '%, conflict: ' + hasConflictSignal + ')'
+    });
 
     var rawHBeforeDecay =
       temporalCapped +
@@ -300,8 +308,7 @@
       rawHBeforeDecay,
       input.secondsSinceLastSignal || 0,
       tauSeconds,
-      baseRawH,  // Pass base for minimum floor
-      input.userLeftSite || false  // Only decay if user has left the site
+      baseRawH  // Pass base for minimum floor
     );
     var score = 100 * (1 - Math.exp(-rawH / k));
     

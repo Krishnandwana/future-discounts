@@ -3,6 +3,8 @@
   "use strict";
 
   var STORAGE_KEY = "convertBoostHesitationEvents";
+  var LAST_VISIT_KEY = "convertBoostLastVisit";
+  var RETURN_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
   var DEFAULTS = {
     rollingWindowSeconds: 1800,
     cooldowns: {
@@ -73,11 +75,14 @@
       lastCouponSeekAt: 0,
       cartOpenAt: null,
       cartProgressed: false,
+      cartDwellThresholdsFired: { t20: false, t60: false },  // Track which thresholds fired
+      cartDwellCheckInterval: null,
       pageHistory: [],
       maxScrollDepth: 0,
       lastScoreUpdate: 0,
       userLeftSite: false,
-      lastPageLeaveTime: null
+      lastPageLeaveTime: null,
+      returnedWithin30Min: false
     };
 
     var updateScoreCallback = null;
@@ -137,8 +142,45 @@
       if (!state.cartOpenAt) {
         state.cartOpenAt = nowMs();
         state.cartProgressed = false;
+        state.cartDwellThresholdsFired = { t20: false, t60: false };
         recordEvent("cart_open", { reason: reason || "unknown" });
         recordMeaningfulAction("cart_open");
+        
+        // Start interval to check cart dwell thresholds
+        if (state.cartDwellCheckInterval) {
+          clearInterval(state.cartDwellCheckInterval);
+        }
+        state.cartDwellCheckInterval = setInterval(function() {
+          checkCartDwellThresholds();
+        }, 5000);  // Check every 5 seconds
+      }
+    }
+    
+    function checkCartDwellThresholds() {
+      if (!state.cartOpenAt || state.cartProgressed) return;
+      
+      var dwellSeconds = (nowMs() - state.cartOpenAt) / 1000;
+      
+      // Fire at 20 seconds threshold
+      if (dwellSeconds >= 20 && !state.cartDwellThresholdsFired.t20) {
+        state.cartDwellThresholdsFired.t20 = true;
+        recordEvent("cart_dwell", {
+          seconds: 20,
+          threshold: "20s",
+          reason: "threshold"
+        });
+        console.log('[HesitationTracker] ⏱️ Cart dwell threshold reached: 20 seconds');
+      }
+      
+      // Fire at 60 seconds threshold
+      if (dwellSeconds >= 60 && !state.cartDwellThresholdsFired.t60) {
+        state.cartDwellThresholdsFired.t60 = true;
+        recordEvent("cart_dwell", {
+          seconds: 60,
+          threshold: "60s",
+          reason: "threshold"
+        });
+        console.log('[HesitationTracker] ⏱️ Cart dwell threshold reached: 60 seconds');
       }
     }
 
@@ -151,8 +193,17 @@
 
     function closeCart(reason) {
       if (!state.cartOpenAt) return;
+      
+      // Clear the threshold check interval
+      if (state.cartDwellCheckInterval) {
+        clearInterval(state.cartDwellCheckInterval);
+        state.cartDwellCheckInterval = null;
+      }
+      
       var durationSeconds = (nowMs() - state.cartOpenAt) / 1000;
-      if (!state.cartProgressed && durationSeconds >= 1) {
+      // Only record final cart_dwell if no thresholds were fired and cart wasn't progressed
+      if (!state.cartProgressed && durationSeconds >= 1 && 
+          !state.cartDwellThresholdsFired.t20 && !state.cartDwellThresholdsFired.t60) {
         recordEvent("cart_dwell", {
           seconds: durationSeconds,
           reason: reason || "unknown"
@@ -161,6 +212,7 @@
       recordEvent("cart_close", { reason: reason || "unknown" });
       state.cartOpenAt = null;
       state.cartProgressed = false;
+      state.cartDwellThresholdsFired = { t20: false, t60: false };
     }
 
     function trackExitIntent(event) {
@@ -453,6 +505,28 @@
       });
       console.log('[HesitationTracker] 📊 Loaded ' + state.events.length + ' existing events from storage');
       
+      // Check if user returned within 30 minutes
+      try {
+        var lastVisit = localStorage.getItem(LAST_VISIT_KEY);
+        if (lastVisit) {
+          var lastVisitTime = parseInt(lastVisit, 10);
+          var timeSinceLastVisit = nowMs() - lastVisitTime;
+          if (timeSinceLastVisit <= RETURN_WINDOW_MS && timeSinceLastVisit > 5000) {
+            // User returned within 30 minutes (but not immediately - at least 5 seconds)
+            state.returnedWithin30Min = true;
+            recordEvent("return_within_30min", {
+              timeSinceLastVisit: Math.round(timeSinceLastVisit / 1000),
+              lastVisitTime: lastVisitTime
+            });
+            console.log('[HesitationTracker] 🔄 User returned within 30 minutes! Time since last visit:', Math.round(timeSinceLastVisit / 1000) + 's');
+          }
+        }
+        // Update last visit timestamp
+        localStorage.setItem(LAST_VISIT_KEY, nowMs().toString());
+      } catch (e) {
+        console.warn('[HesitationTracker] Failed to track return visit:', e);
+      }
+      
       document.addEventListener("click", handleClick);
       document.addEventListener("change", handleChange);
       document.addEventListener("focusin", handleFocusIn);
@@ -463,6 +537,10 @@
         closeCart("page_leave");
         state.userLeftSite = true;
         state.lastPageLeaveTime = nowMs();
+        // Update last visit time for return tracking
+        try {
+          localStorage.setItem(LAST_VISIT_KEY, nowMs().toString());
+        } catch (e) {}
         updateScoreInStorage();
       });
       
@@ -534,7 +612,8 @@
       var meaningfulEventTypes = [
         "cart_open", "add_to_cart", "cart_dwell", "variant_switch",
         "coupon_seek", "back_and_forth_loop", "exit_intent", "micro_pause",
-        "pdp_view", "intent_info_open"
+        "pdp_view", "reviews_open", "size_guide_open", "returns_open", "shipping_open",
+        "cart_quantity_change", "return_within_30min"
       ];
       var lastMeaningfulEvent = recentEvents
         .filter(function(event) {
@@ -647,7 +726,8 @@
         repetition: {
           cartRevisitsTimestamps: cartOpenTs,
           cartVisitTimestamps: cartOpenTs,
-          cartRevisitsCount: cartOpenTs.length  // Count for scorer
+          cartRevisitsCount: cartOpenTs.length,  // Count for scorer
+          returnWithin30Min: state.returnedWithin30Min  // Boolean for scorer
         },
         optimization: {
           variantSwitchTimestamps: variantSwitchTs,
