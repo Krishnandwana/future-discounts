@@ -82,7 +82,14 @@
       lastScoreUpdate: 0,
       userLeftSite: false,
       lastPageLeaveTime: null,
-      returnedWithin30Min: false
+      returnedWithin30Min: false,
+      lastCheckoutStartAt: null,  // For checkout backtracking detection
+      lastFilterChangeAt: 0,  // For price evaluation signals
+      lastInfoOpenBySubtype: {},  // Per-subtype cooldowns for decision-aid signals
+      distinctProductsViewed: [],  // For low-intent suppressor
+      pdpDwellTimes: [],  // Track dwell times per PDP
+      currentPdpPath: null,  // Current PDP being viewed
+      currentPdpStartTime: null  // When current PDP was opened
     };
 
     var updateScoreCallback = null;
@@ -116,7 +123,9 @@
       );
       
       // Trigger score update if callback is set (debounced)
+      // FIX: Update lastScoreUpdate HERE to properly debounce (prevent wasteful CPU)
       if (updateScoreCallback && nowMs() - state.lastScoreUpdate >= 1000) {
+        state.lastScoreUpdate = nowMs();  // Set immediately to prevent re-queuing
         setTimeout(updateScoreCallback, 100);
       }
     }
@@ -140,7 +149,24 @@
 
     function openCart(reason) {
       if (!state.cartOpenAt) {
-        state.cartOpenAt = nowMs();
+        var now = nowMs();
+        
+        // B) Checkout backtracking detection
+        // If user started checkout recently and now opens cart again → strong hesitation
+        if (state.lastCheckoutStartAt) {
+          var BACKTRACK_WINDOW_MS = 5 * 60 * 1000;  // 5 minutes (reduced to avoid false positives)
+          var timeSinceCheckout = now - state.lastCheckoutStartAt;
+          if (timeSinceCheckout <= BACKTRACK_WINDOW_MS) {
+            recordEvent("checkout_backtrack", {
+              secondsSinceCheckout: Math.round(timeSinceCheckout / 1000)
+            });
+            recordMeaningfulAction("checkout_backtrack");
+            console.log('[HesitationTracker] 🔙 Checkout backtracking detected! User started checkout ' + Math.round(timeSinceCheckout / 1000) + 's ago');
+          }
+          state.lastCheckoutStartAt = null;  // Reset to avoid double counting
+        }
+        
+        state.cartOpenAt = now;
         state.cartProgressed = false;
         state.cartDwellThresholdsFired = { t20: false, t60: false };
         recordEvent("cart_open", { reason: reason || "unknown" });
@@ -261,9 +287,11 @@
     }
 
     function handleNavigationChange() {
-      var currentType = getPageType(window.location.pathname);
+      var currentPath = window.location.pathname;
+      var currentType = getPageType(currentPath);
       var now = nowMs();
-      state.pageHistory.push({ type: currentType, ts: now });
+      // Store both type AND path for accurate loop detection
+      state.pageHistory.push({ type: currentType, path: currentPath, ts: now });
       state.pageHistory = state.pageHistory.slice(-5);
 
       var len = state.pageHistory.length;
@@ -272,18 +300,22 @@
         var b = state.pageHistory[len - 2];
         var c = state.pageHistory[len - 1];
         var loopWindowMs = config.loopBackWindowSeconds * 1000;
-        if (
-          a.type === c.type &&
-          a.type !== b.type &&
-          c.ts - a.ts <= loopWindowMs
-        ) {
+        // FIX: Use path, not just type - only count as loop if returning to SAME page/product
+        // This prevents false loops like: product A → collection → product B
+        var isSamePath = a.path === c.path;
+        var isDifferentMiddle = a.path !== b.path;
+        var isWithinWindow = c.ts - a.ts <= loopWindowMs;
+        
+        if (isSamePath && isDifferentMiddle && isWithinWindow) {
           var cooldownMs = config.cooldowns.loopSeconds * 1000;
           if (now - state.lastLoopAt >= cooldownMs) {
             state.lastLoopAt = now;
             recordEvent("back_and_forth_loop", {
-              from: a.type,
-              through: b.type
+              from: a.path,
+              through: b.path,
+              type: a.type
             });
+            console.log('[HesitationTracker] 🔄 Navigation loop detected:', a.path, '→', b.path, '→', c.path);
           } else {
             var remainingCooldown = Math.ceil((cooldownMs - (now - state.lastLoopAt)) / 1000);
             console.log('[HesitationTracker] ⏳ Navigation loop skipped (cooldown: ' + remainingCooldown + 's remaining)');
@@ -294,9 +326,34 @@
       // Reset scroll depth on page change
       state.maxScrollDepth = 0;
       
+      // D) Low-intent suppressor - record PDP dwell time for previous page
+      if (state.currentPdpPath && state.currentPdpStartTime) {
+        var dwellSeconds = (nowMs() - state.currentPdpStartTime) / 1000;
+        state.pdpDwellTimes.push({
+          path: state.currentPdpPath,
+          dwellSeconds: dwellSeconds,
+          ts: nowMs()
+        });
+        // Keep only last 20 PDP visits
+        if (state.pdpDwellTimes.length > 20) {
+          state.pdpDwellTimes.shift();
+        }
+      }
+      state.currentPdpPath = null;
+      state.currentPdpStartTime = null;
+      
       if (currentType === "pdp") {
-        recordEvent("pdp_view", { path: window.location.pathname });
+        var productPath = window.location.pathname;
+        recordEvent("pdp_view", { path: productPath });
         recordMeaningfulAction("pdp_view");
+        
+        // D) Track distinct products for low-intent suppressor
+        if (state.distinctProductsViewed.indexOf(productPath) === -1) {
+          state.distinctProductsViewed.push(productPath);
+          // Keep only products viewed in current session (last 30 min window handled in getSignals)
+        }
+        state.currentPdpPath = productPath;
+        state.currentPdpStartTime = nowMs();
       }
       if (currentType === "cart") {
         openCart("navigation");
@@ -345,6 +402,7 @@
       );
       if (checkout) {
         progressCart("checkout_start");
+        state.lastCheckoutStartAt = nowMs();  // B) Track for backtracking detection
         recordEvent("checkout_start", {});
         recordMeaningfulAction("checkout_start");
       }
@@ -376,6 +434,58 @@
         recordEvent("shipping_open", {});
         recordMeaningfulAction("shipping_open");
       }
+      
+      // A) Additional decision-aid signals (uncertainty reduction)
+      // FIX: Per-subtype cooldown (10s) to prevent inflation from noisy selectors
+      var INFO_OPEN_COOLDOWN_MS = 10 * 1000;  // 10 seconds per subtype
+      var now = nowMs();
+      
+      function recordInfoOpenWithCooldown(subtype) {
+        var lastTime = state.lastInfoOpenBySubtype[subtype] || 0;
+        if (now - lastTime >= INFO_OPEN_COOLDOWN_MS) {
+          state.lastInfoOpenBySubtype[subtype] = now;
+          recordEvent("info_open", { subtype: subtype });
+          recordMeaningfulAction("info_open");
+          return true;
+        }
+        return false;
+      }
+      
+      var faq = target.closest(
+        '[data-faq], .faq, .accordion, [aria-controls*="faq"], details summary, .collapsible-trigger, [data-accordion]'
+      );
+      if (faq) {
+        recordInfoOpenWithCooldown("faq");
+      }
+      
+      var specs = target.closest(
+        '[data-specs], [data-specifications], .product-specs, .specifications, [aria-controls*="spec"], .tabs [data-tab*="spec"]'
+      );
+      if (specs) {
+        recordInfoOpenWithCooldown("specs");
+      }
+      
+      var delivery = target.closest(
+        '[data-delivery], [data-eta], .delivery-estimate, .shipping-estimate, [href*="delivery"], .delivery-info'
+      );
+      if (delivery) {
+        recordInfoOpenWithCooldown("delivery_eta");
+      }
+      
+      var materials = target.closest(
+        '[data-materials], [data-care], .materials, .care-instructions, [aria-controls*="material"], [aria-controls*="care"]'
+      );
+      if (materials) {
+        recordInfoOpenWithCooldown("materials_care");
+      }
+      
+      // C) Sale/offers collection navigation from PDP
+      var saleLink = target.closest('[href*="/sale"], [href*="/offers"], [href*="/clearance"], [href*="/discount"]');
+      if (saleLink) {
+        recordEvent("sale_navigation", { from: window.location.pathname });
+        recordMeaningfulAction("sale_navigation");
+        console.log('[HesitationTracker] 🏷️ Sale/offers navigation detected');
+      }
     }
 
     function handleChange(event) {
@@ -396,6 +506,36 @@
         progressCart("quantity_change");
         recordEvent("cart_quantity_change", {});
         recordMeaningfulAction("cart_quantity_change");
+      }
+      
+      // C) Price filter changes (repeated filter application)
+      var priceFilter = target.closest(
+        'input[name*="price"], select[name*="price"], [data-filter*="price"], .price-filter input, .price-range input'
+      );
+      if (priceFilter) {
+        var now = nowMs();
+        var FILTER_COOLDOWN_MS = 3000;  // 3 second cooldown
+        if (now - state.lastFilterChangeAt > FILTER_COOLDOWN_MS) {
+          recordEvent("price_filter_change", { value: target.value || "unknown" });
+          recordMeaningfulAction("price_filter_change");
+          state.lastFilterChangeAt = now;
+          console.log('[HesitationTracker] 💰 Price filter change detected');
+        }
+      }
+      
+      // C) Price sort detection - FIX: Track in change handler, not click
+      // This reliably catches when user changes sort dropdown
+      var sortSelect = target.closest('select[name*="sort"], select.sort-by, [data-sort-select]');
+      if (sortSelect && target.value) {
+        var sortValue = target.value.toLowerCase();
+        if (sortValue.indexOf('price') !== -1) {
+          recordEvent("price_sort", { 
+            direction: sortValue.indexOf('asc') !== -1 ? 'low-to-high' : 
+                       sortValue.indexOf('desc') !== -1 ? 'high-to-low' : sortValue 
+          });
+          recordMeaningfulAction("price_sort");
+          console.log('[HesitationTracker] 💰 Price sort detected:', sortValue);
+        }
       }
     }
 
@@ -613,7 +753,9 @@
         "cart_open", "add_to_cart", "cart_dwell", "variant_switch",
         "coupon_seek", "back_and_forth_loop", "exit_intent", "micro_pause",
         "pdp_view", "reviews_open", "size_guide_open", "returns_open", "shipping_open",
-        "cart_quantity_change", "return_within_30min"
+        "cart_quantity_change", "return_within_30min",
+        // New high-impact signals
+        "checkout_backtrack", "info_open", "price_filter_change", "price_sort", "sale_navigation"
       ];
       var lastMeaningfulEvent = recentEvents
         .filter(function(event) {
@@ -660,7 +802,7 @@
       var infoOpenTs = state.events
         .filter(function (event) {
           return (
-            ["reviews_open", "size_guide_open", "returns_open", "shipping_open"].indexOf(
+            ["reviews_open", "size_guide_open", "returns_open", "shipping_open", "info_open"].indexOf(
               event.type
             ) !== -1 && nowTime - event.ts <= windowMs
           );
@@ -668,6 +810,59 @@
         .map(function (event) {
           return event.ts;
         });
+      
+      // A) Decision-aid usage count
+      var decisionAidCount = infoOpenTs.length;
+      
+      // B) Checkout backtracking
+      var checkoutBacktrackEvents = eventsInWindow("checkout_backtrack", nowTime, windowMs);
+      var hasCheckoutBacktrack = checkoutBacktrackEvents.length > 0;
+      
+      // C) Price evaluation signals
+      var priceFilterEvents = eventsInWindow("price_filter_change", nowTime, windowMs);
+      var priceSortEvents = eventsInWindow("price_sort", nowTime, windowMs);
+      var saleNavEvents = eventsInWindow("sale_navigation", nowTime, windowMs);
+      var priceEvaluationCount = priceFilterEvents.length + priceSortEvents.length + saleNavEvents.length;
+      
+      // D) Low-intent suppressor: calculate browsing indicators
+      var recentPdpViews = eventsInWindow("pdp_view", nowTime, windowMs);
+      var distinctPdpPaths = [];
+      recentPdpViews.forEach(function(event) {
+        if (event.data && event.data.path && distinctPdpPaths.indexOf(event.data.path) === -1) {
+          distinctPdpPaths.push(event.data.path);
+        }
+      });
+      var distinctPdpCount = distinctPdpPaths.length;
+      
+      // Check for repeat PDP views (same product viewed multiple times)
+      var pdpViewCounts = {};
+      recentPdpViews.forEach(function(event) {
+        if (event.data && event.data.path) {
+          pdpViewCounts[event.data.path] = (pdpViewCounts[event.data.path] || 0) + 1;
+        }
+      });
+      var hasRepeatPdpViews = Object.keys(pdpViewCounts).some(function(path) {
+        return pdpViewCounts[path] >= 2;
+      });
+      
+      // Calculate average PDP dwell time from recent dwells
+      var recentDwells = state.pdpDwellTimes.filter(function(d) {
+        return nowTime - d.ts <= windowMs;
+      });
+      var avgPdpDwellSeconds = 0;
+      if (recentDwells.length > 0) {
+        var totalDwell = recentDwells.reduce(function(sum, d) { return sum + d.dwellSeconds; }, 0);
+        avgPdpDwellSeconds = totalDwell / recentDwells.length;
+      }
+      
+      // Low-intent browsing: many distinct PDPs, no repeats, no cart, short dwell
+      var isLowIntentBrowsing = (
+        distinctPdpCount >= 6 &&
+        !hasRepeatPdpViews &&
+        cartOpenTs.length === 0 &&
+        infoOpenTs.length === 0 &&
+        avgPdpDwellSeconds < 15
+      );
       // Get variant switch events
       var variantSwitchEvents = eventsInWindow("variant_switch", nowTime, windowMs);
       var variantSwitchTs = variantSwitchEvents.map(function (event) {
@@ -726,15 +921,19 @@
         repetition: {
           cartRevisitsTimestamps: cartOpenTs,
           cartVisitTimestamps: cartOpenTs,
-          cartRevisitsCount: cartOpenTs.length,  // Count for scorer
-          returnWithin30Min: state.returnedWithin30Min  // Boolean for scorer
+          // FIX: First cart open is not a "revisit" - subtract 1
+          cartRevisitsCount: Math.max(0, cartOpenTs.length - 1),
+          cartOpensCount: cartOpenTs.length,  // Raw count for reference
+          returnWithin30Min: state.returnedWithin30Min,  // Boolean for scorer
+          checkoutBacktrack: hasCheckoutBacktrack  // B) Very strong signal
         },
         optimization: {
           variantSwitchTimestamps: variantSwitchTs,
           variantSwitches: variantSwitchTs.length,  // Count for scorer
           couponSeekTimestamps: couponSeekTs,
           couponSeeking: couponSeekTs.length > 0,  // Boolean for scorer
-          cartQuantityChanges: cartQuantityChangesCount  // Count for scorer
+          cartQuantityChanges: cartQuantityChangesCount,  // Count for scorer
+          priceEvaluationCount: priceEvaluationCount  // C) Price evaluation signals
         },
         navigation: {
           loopTimestamps: loopTs,
@@ -747,7 +946,15 @@
           cartOpenedTimestamps: cartOpenTs,
           addToCartTimestamps: addToCartTs,
           pdpViewTimestamps: pdpViewTs,
-          intentInfoOpenTimestamps: infoOpenTs
+          intentInfoOpenTimestamps: infoOpenTs,
+          decisionAidCount: decisionAidCount  // A) Decision-aid usage
+        },
+        // D) Low-intent suppressor indicators
+        browsingIndicators: {
+          distinctPdpCount: distinctPdpCount,
+          hasRepeatPdpViews: hasRepeatPdpViews,
+          avgPdpDwellSeconds: avgPdpDwellSeconds,
+          isLowIntentBrowsing: isLowIntentBrowsing
         },
         secondsSinceLastSignal: lastEventTs ? (nowTime - lastEventTs) / 1000 : 0,
         nowMs: nowTime,
@@ -760,6 +967,9 @@
               variantSwitches: signals.optimization.variantSwitches,
               cartQuantityChanges: signals.optimization.cartQuantityChanges || 0,
               cartRevisits: signals.repetition.cartRevisitsCount,
+              checkoutBacktrack: signals.repetition.checkoutBacktrack ? '✅' : '❌',
+              priceEvaluation: signals.optimization.priceEvaluationCount || 0,
+              decisionAid: signals.engagement.decisionAidCount || 0,
               microPauses: signals.temporal.microPauseSeconds.length,
               cartDwell: signals.temporal.cartDwellSeconds,
               loops: signals.navigation.backAndForthLoops,

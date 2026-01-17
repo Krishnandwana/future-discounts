@@ -18,29 +18,32 @@
   var WEIGHTS = {
     temporal: {
       microPause: 6,
-      cartDwell: 14
+      cartDwell: 14,
+      decisionAidUsage: 8  // A) Strong - seeking info to reduce uncertainty
     },
     repetition: {
       cartRevisits: 16,
-      returnWithin30Min: 10
+      returnWithin30Min: 10,
+      checkoutBacktrack: 20  // B) Very strong - "wanted to pay but got stuck"
     },
     optimization: {
       variantSwitches: 12,
       couponSeeking: 9,
-      cartQuantityChanges: 10  // Moderate weight - changing cart quantity indicates hesitation
+      cartQuantityChanges: 10,  // Moderate weight - changing cart quantity indicates hesitation
+      priceEvaluation: 7  // C) Medium-strong - price sensitivity signals
     },
     navigation: {
       backAndForthLoops: 7,
       exitIntent: 4,
-      scrollDepth: 3  // Weak indicator - deep scrolling is supplementary signal
+      scrollDepth: 3  // Weak indicator - conditional on conflict signals
     }
   };
 
   var CAPS = {
-    temporal: 25,
-    repetition: 35,
-    optimization: 30,  // Increased to accommodate cart quantity changes
-    navigation: 18  // Increased from 15 to accommodate scroll depth
+    temporal: 30,  // Increased for decision-aid usage
+    repetition: 45,  // Increased for checkout backtrack
+    optimization: 35,  // Increased for price evaluation
+    navigation: 18
   };
 
   function clamp(value, min, max) {
@@ -189,16 +192,25 @@
       0
     );
     var cartDwell = cartDwellEvidence(temporal.cartDwellSeconds || 0);
+    
+    // A) Decision-aid usage (seeking info to reduce uncertainty)
+    var decisionAidCount = (input.engagement && input.engagement.decisionAidCount) || 0;
+    var decisionAidUsage = countEvidence(decisionAidCount, 3);
 
     var cartRevisits = countEvidence(repetition.cartRevisitsCount || 0, 3);
     var returnWithin30Min = booleanEvidence(
       repetition.returnWithin30Min || false
     );
+    // B) Checkout backtracking (very strong signal)
+    var checkoutBacktrack = booleanEvidence(repetition.checkoutBacktrack || false);
 
     var variantSwitchCount = optimization.variantSwitches || 0;
     var variantSwitches = countEvidence(variantSwitchCount, 5);
     var couponSeeking = booleanEvidence(optimization.couponSeeking || false);
     var cartQuantityChanges = countEvidence(optimization.cartQuantityChanges || 0, 2);
+    // C) Price evaluation signals
+    var priceEvaluationCount = optimization.priceEvaluationCount || 0;
+    var priceEvaluation = countEvidence(priceEvaluationCount, 3);
     
     // Debug logging
     if (variantSwitchCount > 0) {
@@ -213,6 +225,21 @@
         count: optimization.cartQuantityChanges,
         evidence: cartQuantityChanges,
         points: (cartQuantityChanges * WEIGHTS.optimization.cartQuantityChanges).toFixed(2)
+      });
+    }
+    if (checkoutBacktrack) {
+      console.log('[HesitationScore] 🔙 Checkout backtracking detected! +' + WEIGHTS.repetition.checkoutBacktrack + ' points');
+    }
+    if (decisionAidCount > 0) {
+      console.log('[HesitationScore] 📚 Decision-aid usage:', {
+        count: decisionAidCount,
+        points: (decisionAidUsage * WEIGHTS.temporal.decisionAidUsage).toFixed(2)
+      });
+    }
+    if (priceEvaluationCount > 0) {
+      console.log('[HesitationScore] 💰 Price evaluation:', {
+        count: priceEvaluationCount,
+        points: (priceEvaluation * WEIGHTS.optimization.priceEvaluation).toFixed(2)
       });
     }
 
@@ -235,16 +262,19 @@
     var evidence = {
       temporal: {
         microPause: microPauseMax,
-        cartDwell: cartDwell
+        cartDwell: cartDwell,
+        decisionAidUsage: decisionAidUsage  // A) Decision-aid
       },
       repetition: {
         cartRevisits: cartRevisits,
-        returnWithin30Min: returnWithin30Min
+        returnWithin30Min: returnWithin30Min,
+        checkoutBacktrack: checkoutBacktrack  // B) Checkout backtrack
       },
       optimization: {
         variantSwitches: variantSwitches,
         couponSeeking: couponSeeking,
-        cartQuantityChanges: cartQuantityChanges
+        cartQuantityChanges: cartQuantityChanges,
+        priceEvaluation: priceEvaluation  // C) Price evaluation
       },
       navigation: {
         backAndForthLoops: backAndForthLoops,
@@ -255,17 +285,17 @@
 
     var temporalRaw =
       WEIGHTS.temporal.microPause * evidence.temporal.microPause +
-      WEIGHTS.temporal.cartDwell * evidence.temporal.cartDwell;
+      WEIGHTS.temporal.cartDwell * evidence.temporal.cartDwell +
+      WEIGHTS.temporal.decisionAidUsage * evidence.temporal.decisionAidUsage;  // A) Decision-aid
     var repetitionRaw =
       WEIGHTS.repetition.cartRevisits * evidence.repetition.cartRevisits +
-      WEIGHTS.repetition.returnWithin30Min *
-        evidence.repetition.returnWithin30Min;
+      WEIGHTS.repetition.returnWithin30Min * evidence.repetition.returnWithin30Min +
+      WEIGHTS.repetition.checkoutBacktrack * evidence.repetition.checkoutBacktrack;  // B) Checkout backtrack
     var optimizationRaw =
-      WEIGHTS.optimization.variantSwitches *
-        evidence.optimization.variantSwitches +
+      WEIGHTS.optimization.variantSwitches * evidence.optimization.variantSwitches +
       WEIGHTS.optimization.couponSeeking * evidence.optimization.couponSeeking +
-      WEIGHTS.optimization.cartQuantityChanges *
-        evidence.optimization.cartQuantityChanges;
+      WEIGHTS.optimization.cartQuantityChanges * evidence.optimization.cartQuantityChanges +
+      WEIGHTS.optimization.priceEvaluation * evidence.optimization.priceEvaluation;  // C) Price evaluation
     var navigationRawWithoutExit =
       WEIGHTS.navigation.backAndForthLoops *
       evidence.navigation.backAndForthLoops +
@@ -319,6 +349,24 @@
       score = Math.max(score, minScore);
       rawH = Math.max(rawH, baseRawH * 0.05);
     }
+    
+    // D) Low-intent suppressor - cap score for browsing behavior
+    // Browsing = many distinct PDPs, no repeats, no cart, no info opens, short dwell
+    var isLowIntentBrowsing = false;
+    var browsingIndicators = input.browsingIndicators || {};
+    if (browsingIndicators.isLowIntentBrowsing) {
+      isLowIntentBrowsing = true;
+      // Cap score at 20 for pure browsers (prevents margin leaks)
+      var LOW_INTENT_CAP = 20;
+      if (score > LOW_INTENT_CAP) {
+        console.log('[HesitationScore] ⚠️ Low-intent browsing detected! Score capped from ' + score.toFixed(2) + ' to ' + LOW_INTENT_CAP);
+        console.log('[HesitationScore] 📊 Browsing indicators:', browsingIndicators);
+        score = LOW_INTENT_CAP;
+        // FIX: Use inverse of scoring formula to get consistent rawH
+        // score = 100 * (1 - exp(-rawH/k)) => rawH = -k * ln(1 - score/100)
+        rawH = -k * Math.log(1 - LOW_INTENT_CAP / 100);
+      }
+    }
 
     return {
       score: clamp(score, 0, 100),
@@ -336,7 +384,9 @@
         k: k,
         tauSeconds: tauSeconds,
         exitIntentApplied: exitIntent > 0,
-        rawHWithoutExit: rawHWithoutExit
+        rawHWithoutExit: rawHWithoutExit,
+        isLowIntentBrowsing: isLowIntentBrowsing,
+        browsingIndicators: browsingIndicators
       }
     };
   }
