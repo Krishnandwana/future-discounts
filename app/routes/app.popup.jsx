@@ -212,6 +212,7 @@ let defaultData = {
   sidebarWidgetBackground: '#F4F6F8',
   sidebarWidgetTextColor: '#202223',
   intentMultiplier: 5,
+  hesitationThreshold: 50,
   
   // Typography
   fontFamily: 'system',

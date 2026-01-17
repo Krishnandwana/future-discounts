@@ -13,7 +13,8 @@ const initLogger = {
 };
 
 // Function to show popup after validation passes
-function displayValidatedPopup(popupConfig) {
+function displayValidatedPopup(popupConfig, options) {
+  var opts = options || {};
   
   // Store current form data globally
   currentFormData = popupConfig;
@@ -42,7 +43,13 @@ function displayValidatedPopup(popupConfig) {
   }
 
   // Handle different trigger types
-  if (popupConfig.trigger === 'scroll') {
+  if (opts.forceImmediate) {
+    popupContainer.style.display = 'flex';
+    popupContainer.style.alignItems = 'center';
+    popupContainer.style.justifyContent = 'center';
+    popupContainer.style.animation = 'fadeIn 0.3s ease-out';
+    markPopupShown();
+  } else if (popupConfig.trigger === 'scroll') {
     handleScrollTrigger(popupContainer, popupConfig, markPopupShown);
   } else if (popupConfig.trigger === 'timer') {
     handleTimerTrigger(popupContainer, popupConfig, markPopupShown);
@@ -99,6 +106,52 @@ function handleTimerTrigger(container, config, onShow) {
     if (onShow) onShow();
     //(`Popup triggered by timer after ${time} seconds`);
   }, time * 1000);
+}
+
+// Wait for hesitation score to reach threshold before showing popup
+function waitForHesitationThreshold(popupConfig, onReady) {
+  var thresholdRaw = popupConfig && popupConfig.hesitationThreshold;
+  var threshold = Number.isFinite(Number(thresholdRaw)) ? parseInt(thresholdRaw, 10) : 50;
+
+  window.convertBoostHesitationThreshold = threshold;
+  try {
+    localStorage.setItem("convertBoostHesitationThreshold", String(threshold));
+  } catch (e) {
+    initLogger.warn('Could not persist hesitation threshold to localStorage');
+  }
+  console.log('[Init] Hesitation threshold set from metafields', {
+    popupId: popupConfig && popupConfig.id,
+    threshold: threshold
+  });
+
+  function checkScore() {
+    if (typeof window.convertBoostHesitationTracker === 'undefined') {
+      return false;
+    }
+    var scoreData = window.convertBoostHesitationTracker.getScore();
+    if (!scoreData) {
+      return false;
+    }
+    var currentScore = scoreData.score || 0;
+    if (currentScore >= threshold) {
+      onReady({
+        hesitationScore: currentScore,
+        threshold: threshold
+      });
+      return true;
+    }
+    return false;
+  }
+
+  if (checkScore()) {
+    return;
+  }
+
+  var intervalId = setInterval(() => {
+    if (checkScore()) {
+      clearInterval(intervalId);
+    }
+  }, 1000);
 }
 
 
@@ -231,19 +284,8 @@ async function initializeConvertBoost() {
         continue;
       }
 
-      // Validate location rules with backend
-      const validation = await validatePopupWithBackend(popup);
-
-      if (!validation.shouldShow) {
-        // console.log(`Popup ${popup.id} failed location validation, skipping`);
-        continue;
-      }
-
-      // Add eligible popup with validation data
-      eligiblePopups.push({
-        popup,
-        validation
-      });
+      // Add eligible popup
+      eligiblePopups.push({ popup });
     }
 
     // console.log('✅ Eligible popups after all checks', {
@@ -257,9 +299,9 @@ async function initializeConvertBoost() {
       return;
     }
 
-    // Enhanced popup selection: Prioritize location-specific popups
-    // Score each popup based on location specificity and priority
-    const scoredPopups = eligiblePopups.map(({ popup, validation }, index) => {
+    // Enhanced popup selection: Prioritize popups based on hesitation threshold
+    // Score each popup based on threshold specificity and priority
+    const scoredPopups = eligiblePopups.map(({ popup }, index) => {
       let score = 0;
       
       // Base score from updatedAt (newer = higher priority)
@@ -300,7 +342,6 @@ async function initializeConvertBoost() {
       
       return {
         popup,
-        validation,
         score
       };
     });
@@ -311,7 +352,6 @@ async function initializeConvertBoost() {
     // Select the highest scoring popup (most location-specific)
     const selectedPopupData = scoredPopups[0];
     const popupConfig = selectedPopupData.popup;
-    const validation = selectedPopupData.validation;
     
     // console.log('🎯 Popup selection scores', {
     //   selected: {
@@ -339,30 +379,33 @@ async function initializeConvertBoost() {
 
     // All validation already done above, we have a selected popup to show
 
-    // Track successful popup view
-    await trackPopupEvent('view', popupConfig, {
-      location: validation.userLocation
-    });
+    // Wait until hesitation threshold is reached, then show popup
+    waitForHesitationThreshold(popupConfig, async (scoreData) => {
+      // Track successful popup view
+      await trackPopupEvent('view', popupConfig, {
+        hesitationScore: scoreData.hesitationScore,
+        threshold: scoreData.threshold
+      });
 
-    // Check if this is a silent discount - handle differently
-    if (popupConfig.discountType === 'silent') {
-      console.log('Silent discount detected - creating discount automatically');
-      
-      // Create params for silent discount
-      const params = new URLSearchParams();
-      params.append('popupConfigId', popupConfig.id);
-      params.append('shopName', window.shopConfig ? window.shopConfig.shopName : '{{ shop.domain }}');
-      
-      // Store current form data for the silent discount function
-      currentFormData = popupConfig;
-      
-      // Trigger silent discount automatically
-      triggerSilentDiscount(params);
-    } else {
-      // Display the popup for normal discounts
-      // console.log('🎯 About to display popup - all checks passed');
-      displayValidatedPopup(popupConfig);
-    }
+      // Check if this is a silent discount - handle differently
+      if (popupConfig.discountType === 'silent') {
+        console.log('Silent discount detected - creating discount automatically');
+        
+        // Create params for silent discount
+        const params = new URLSearchParams();
+        params.append('popupConfigId', popupConfig.id);
+        params.append('shopName', window.shopConfig ? window.shopConfig.shopName : '{{ shop.domain }}');
+        
+        // Store current form data for the silent discount function
+        currentFormData = popupConfig;
+        
+        // Trigger silent discount automatically
+        triggerSilentDiscount(params);
+      } else {
+        // Display the popup for normal discounts
+        displayValidatedPopup(popupConfig, { forceImmediate: true });
+      }
+    });
 
   } catch (error) {
     initLogger.error('Error during Convert Boost initialization', {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Button, Card } from '@shopify/polaris';
 import DiscountOptions from './DiscountOptions';
-import DiscountLocation from './DiscountLocation';
+import HesitationThreshold from './HesitationThreshold';
 import StickyDiscountBar from './StickyDiscountBar';
 import Trigger from './Trigger';
 import When from './when';
@@ -43,7 +43,7 @@ const RulesPage = ({ tabs, handleTabClick, activeTab,formData, setFormData }) =>
                         <div style={{ marginTop: "35px" }}></div>
                         <DiscountOptions formData={formData} handleChange={handleChange} />
                         <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid #e1e3e5' }} />
-                        <DiscountLocation formData={formData} handleChange={handleChange} />
+                        <HesitationThreshold formData={formData} handleChange={handleChange} />
                         <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid #e1e3e5' }} />
                         <Trigger formData={formData} handleChange={handleChange} />
                         <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid #e1e3e5' }} />

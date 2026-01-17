@@ -40,7 +40,7 @@ export async function action({ request }) {
 
       // Define the allowed fields that can be updated
       const allowedFields = [
-        'discountName','couponCode','subheading','discountType','valueType','discountValue','expirationDate','discountLocation','selectedCountry','selectedCountries','selectedCity','selectedState','locationType','locationRules','stickyDiscountBar','sidebarWidget','mobileDevices','trigger','scrollPercentage','time','devices','limitFrequency','popupFrequency','popupPeriod','pageRules','subPageRules','scheduleRules','scheduleType','everydaystartTime','everydayendTime','endDate','endTime','askForEmail','startImmediately','startDate','startTime','minPurchaseValue','purchaseType','maxUsesType','maxTotalUses','combineWithProductDiscounts','combineWithShippingDiscounts','combineWithOrderDiscounts','heading','description','fields','primaryButton','primaryButtonText','secondaryButton','secondaryButtonText','footerText','sucessStatusHeading','successDescription','clickAction','buttonText','stickyBarDescription','sidebarButtonText','redirectUrl','template','logo','alignment','cornerRadius','imagePosition','imageWidth','backgroundImage','backgroundOpacity','backgroundColor','textColor','headingColor','descriptionColor','inputColor','consentColor','errorColor','footerTextColor','primaryButtonBackground','primaryButtonTextColor','secondaryButtonBackground','secondaryButtonTextColor','stickyDiscountBarBackground','stickyDiscountBarText','sidebarWidgetBackground','sidebarWidgetTextColor','status','intentMultiplier','fontFamily','headingSize','bodySize','buttonSize','footerSize'
+        'discountName','couponCode','subheading','discountType','valueType','discountValue','expirationDate','hesitationThreshold','stickyDiscountBar','sidebarWidget','mobileDevices','trigger','scrollPercentage','time','devices','limitFrequency','popupFrequency','popupPeriod','pageRules','subPageRules','scheduleRules','scheduleType','everydaystartTime','everydayendTime','endDate','endTime','askForEmail','startImmediately','startDate','startTime','minPurchaseValue','purchaseType','maxUsesType','maxTotalUses','combineWithProductDiscounts','combineWithShippingDiscounts','combineWithOrderDiscounts','heading','description','fields','primaryButton','primaryButtonText','secondaryButton','secondaryButtonText','footerText','sucessStatusHeading','successDescription','clickAction','buttonText','stickyBarDescription','sidebarButtonText','redirectUrl','template','logo','alignment','cornerRadius','imagePosition','imageWidth','backgroundImage','backgroundOpacity','backgroundColor','textColor','headingColor','descriptionColor','inputColor','consentColor','errorColor','footerTextColor','primaryButtonBackground','primaryButtonTextColor','secondaryButtonBackground','secondaryButtonTextColor','stickyDiscountBarBackground','stickyDiscountBarText','sidebarWidgetBackground','sidebarWidgetTextColor','status','intentMultiplier','fontFamily','headingSize','bodySize','buttonSize','footerSize'
       ];
 
       // Build sanitizedData only with the fields provided in the request
@@ -60,6 +60,9 @@ export async function action({ request }) {
       // Typecasting and sanitization for specific fields
       if ('discountValue' in sanitizedData && sanitizedData.discountValue !== null) {
         sanitizedData.discountValue = parseFloat(sanitizedData.discountValue);
+      }
+      if ('hesitationThreshold' in sanitizedData && sanitizedData.hesitationThreshold !== null) {
+        sanitizedData.hesitationThreshold = parseInt(sanitizedData.hesitationThreshold, 10);
       }
       if ('imageWidth' in sanitizedData && sanitizedData.imageWidth !== null) {
         sanitizedData.imageWidth = parseInt(sanitizedData.imageWidth);

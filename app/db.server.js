@@ -6,8 +6,8 @@ process.env.DEBUG = process.env.DEBUG ? process.env.DEBUG.replace(/prisma:[^,\s]
 // Prefer the direct database URL so we always talk to the schema that already has the session table
 const databaseUrl =
   process.env.DATABASE_URL ||
-  process.env.CONVERTBOOST_DATABASE_DIRECT_URL ||
-  process.env.CONVERTBOOST_DATABASE_URL;
+  process.env.FUTUREDISCOUNTS_DATABASE_DIRECT_URL ||
+  process.env.FUTUREDISCOUNTS_DATABASE_URL;
 
 // Optimize Prisma client for performance
 const prismaClientOptions = {

@@ -595,8 +595,11 @@
       if (now - state.lastScoreUpdate < 2000) return;
       state.lastScoreUpdate = now;
       
-      // Get desired threshold from localStorage or use default
+      // Get desired threshold from global or localStorage
       var desiredThreshold = 50; // Default threshold
+      if (typeof window !== "undefined" && Number.isFinite(Number(window.convertBoostHesitationThreshold))) {
+        desiredThreshold = parseInt(window.convertBoostHesitationThreshold, 10);
+      }
       try {
         var stored = localStorage.getItem("convertBoostHesitationThreshold");
         if (stored) {
@@ -990,6 +993,9 @@
       
       // Get desired threshold
       var desiredThreshold = 50;
+      if (typeof window !== "undefined" && Number.isFinite(Number(window.convertBoostHesitationThreshold))) {
+        desiredThreshold = parseInt(window.convertBoostHesitationThreshold, 10);
+      }
       try {
         var stored = localStorage.getItem("convertBoostHesitationThreshold");
         if (stored) {

@@ -44,14 +44,7 @@ export async function action({ request }) {
         valueType: data.valueType || 'percentage',
         discountValue: parseFloat(data.discountValue) || 10,
         expirationDate: data.expirationDate || false,
-        discountLocation: data.discountLocation || 'exclude',
-        selectedCountry: data.selectedCountry || 'India',
-        selectedState: data.selectedState || [],
-        selectedCity: data.selectedCity || [], // Add selectedCity here
-        selectedCountries: data.selectedCountries || [],
-        // cityOptions: data.cityOptions || [], // Add cityOptions here
-        locationType: data.locationType || 'city',
-        locationRules: data.locationRules || 'certainCountries',
+        hesitationThreshold: Number.isFinite(Number(data.hesitationThreshold)) ? parseInt(data.hesitationThreshold, 10) : 50,
         stickyDiscountBar: data.stickyDiscountBar || 'yes',
         sidebarWidget: data.sidebarWidget || 'no',
         trigger: data.trigger || 'scroll',

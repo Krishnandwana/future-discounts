@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { Card, Button, Text, BlockStack, InlineStack, ProgressBar, TextField, RadioButton, Icon, Banner, Box, Collapsible, Autocomplete, Tag, Spinner, Select } from "@shopify/polaris";
-import { TargetIcon, GlobeIcon, ChevronDownIcon, ChevronUpIcon, AlertCircleIcon } from "@shopify/polaris-icons";
+import { Card, Button, Text, BlockStack, InlineStack, ProgressBar, TextField, RadioButton, RangeSlider, Icon, Banner, Box, Collapsible, Autocomplete, Tag, Spinner, Select } from "@shopify/polaris";
+import { GlobeIcon, ChevronDownIcon, ChevronUpIcon, AlertCircleIcon } from "@shopify/polaris-icons";
 import countriesData from '../routes/_index/countries.json';
 import popupTemplates from '../data/popupTemplates.json';
 import PreviewPopup from './PreviewPopup';
@@ -61,6 +61,7 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
     trigger: "timer",
     triggerValue: 3,
     scrollValue: 50,
+    hesitationThreshold: 50,
     discount: 10,
     headline: "",
     subheadline: "",
@@ -240,13 +241,6 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
         discountValue: wizardData.discount || 10,
         devices: ['all'],
         mobileDevices: 'all',
-        discountLocation: wizardData.targetLocation === 'all' ? 'exclude' : 'include',
-        locationRules: wizardData.targetLocation === 'all' ? 'allCountries' : 'certainCountries',
-        selectedCountries: wizardData.selectedCountries || [],
-        selectedCity: wizardData.selectedCity || [],
-        selectedCountry: wizardData.selectedCountry || 'India',
-        locationType: wizardData.locationType || 'country',
-        cityOptions: wizardData.cityOptions || [],
         trigger: wizardData.trigger === 'timer' ? 'timer' : wizardData.trigger === 'scroll' ? 'scroll' : 'intent',
         time: String(wizardData.triggerValue || 3),
         scrollPercentage: String(wizardData.scrollValue || 50),
@@ -273,8 +267,6 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
         stickyBarDescription: templateData.stickyBarDescription || "Don't forget to use your discount code",
         sidebarButtonText: templateData.sidebarButtonText || 'Get 25% OFF',
         expirationDate: false,
-        selectedState: [],
-        stateOptions: [],
         limitFrequency: true,
         popupFrequency: 3,
         popupPeriod: 'day',
@@ -293,6 +285,7 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
         combineWithProductDiscounts: false,
         combineWithOrderDiscounts: false,
         combineWithShippingDiscounts: false,
+        hesitationThreshold: wizardData.hesitationThreshold ?? 50,
         logo: templateData.logo ?? null,
         imagePosition: templateData.imagePosition || 'background',
         imageWidth: templateData.imageWidth ? String(templateData.imageWidth) : '20%',
@@ -443,108 +436,16 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
     const content = () => {
       switch (currentStepId) {
         case "setup":
-          // All-in-one setup page: Targeting + Trigger + Discount
+          // All-in-one setup page: Trigger + Discount
           return (
             <div style={{ height: '100%', overflowY: 'auto', paddingRight: '8px' }}>
               <BlockStack gap="500">
                 <Text variant="headingLg" fontWeight="semibold">Campaign Setup</Text>
 
-                {/* Targeting Section */}
-                <div style={{ background: '#fafbfc', borderRadius: '8px', padding: '16px', border: '1px solid #e1e3e5' }}>
-                  <BlockStack gap="400">
-                    <Text variant="headingMd" fontWeight="medium">1. Audience Targeting</Text>
-                    <BlockStack gap="300">
-                      <RadioButton
-                        label="All visitors worldwide"
-                        checked={wizardData.targetLocation === "all"}
-                        onChange={() => setWizardData({ ...wizardData, targetLocation: "all" })}
-                      />
-                      <RadioButton
-                        label="Specific countries"
-                        checked={wizardData.targetLocation === "countries"}
-                        onChange={() => setWizardData({ ...wizardData, targetLocation: "countries", locationType: 'country' })}
-                      />
-                      <RadioButton
-                        label="Specific cities"
-                        checked={wizardData.targetLocation === "city"}
-                        onChange={() => setWizardData({ ...wizardData, targetLocation: "city", locationType: 'city' })}
-                      />
-                    </BlockStack>
-
-                    {wizardData.targetLocation === "countries" && (
-                      <BlockStack gap="200">
-                        <Autocomplete
-                          allowMultiple
-                          options={filterAndSortItems(countryInputValue, countryOptions)}
-                          selected={wizardData.selectedCountries || []}
-                          onSelect={handleCountrySelection}
-                          textField={
-                            <Autocomplete.TextField
-                              onChange={(value) => setCountryInputValue(value)}
-                              label="Select Countries"
-                              value={countryInputValue}
-                              placeholder="Type to search..."
-                            />
-                          }
-                        />
-                        {wizardData.selectedCountries?.length > 0 && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                            {wizardData.selectedCountries.map((country) => (
-                              <Tag key={country} onRemove={() => removeCountry(country)}>{country}</Tag>
-                            ))}
-                          </div>
-                        )}
-                      </BlockStack>
-                    )}
-
-                    {wizardData.targetLocation === "city" && (
-                      <BlockStack gap="200">
-                        <Select
-                          label="Country"
-                          options={[{ label: 'Choose a country', value: '' }, ...countryOptions]}
-                          value={wizardData.selectedCountry || ''}
-                          onChange={(value) => setWizardData({ ...wizardData, selectedCountry: value, selectedCity: [] })}
-                        />
-                        {wizardData.selectedCountry && (
-                          <>
-                            {isLoadingCities ? (
-                              <div style={{ display: 'flex', justifyContent: 'center', padding: '12px' }}>
-                                <Spinner size="small" />
-                              </div>
-                            ) : (
-                              <Autocomplete
-                                allowMultiple
-                                options={filterAndSortItems(cityInputValue, wizardData.cityOptions || [])}
-                                selected={wizardData.selectedCity || []}
-                                onSelect={handleCitySelection}
-                                textField={
-                                  <Autocomplete.TextField
-                                    onChange={(value) => setCityInputValue(value)}
-                                    label="Cities"
-                                    value={cityInputValue}
-                                    placeholder="Type to search..."
-                                  />
-                                }
-                              />
-                            )}
-                            {wizardData.selectedCity?.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                {wizardData.selectedCity.map((city) => (
-                                  <Tag key={city} onRemove={() => removeCity(city)}>{city}</Tag>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </BlockStack>
-                    )}
-                  </BlockStack>
-                </div>
-
                 {/* Trigger Section */}
                 <div style={{ background: '#fafbfc', borderRadius: '8px', padding: '16px', border: '1px solid #e1e3e5' }}>
                   <BlockStack gap="400">
-                    <Text variant="headingMd" fontWeight="medium">2. Popup Trigger</Text>
+                    <Text variant="headingMd" fontWeight="medium">1. Popup Trigger</Text>
                     <BlockStack gap="300">
                       <RadioButton
                         label="Timer based"
@@ -584,6 +485,25 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
                         </Box>
                       )}
                     </BlockStack>
+                  </BlockStack>
+                </div>
+
+                {/* Hesitation Threshold Section */}
+                <div style={{ background: '#fafbfc', borderRadius: '8px', padding: '16px', border: '1px solid #e1e3e5' }}>
+                  <BlockStack gap="400">
+                    <Text variant="headingMd" fontWeight="medium">2. Hesitation Threshold</Text>
+                    <Text variant="bodySm" tone="subdued">
+                      Offer the discount when a visitor's hesitation score reaches this level.
+                    </Text>
+                    <RangeSlider
+                      label="Hesitation Score Threshold"
+                      value={wizardData.hesitationThreshold ?? 50}
+                      onChange={(value) => setWizardData({ ...wizardData, hesitationThreshold: value })}
+                      min={0}
+                      max={100}
+                      step={5}
+                      output
+                    />
                   </BlockStack>
                 </div>
 
@@ -672,17 +592,15 @@ export default function SetupWizard({ onComplete, appEmbedEnabled, shopName, ext
               <div style={{ background: '#f8fafc', borderRadius: '8px', padding: '16px', border: '1px solid #e5e7eb' }}>
                 <BlockStack gap="300">
                   <div>
-                    <Text variant="bodyXs" color="subdued">Targeting</Text>
-                    <Text variant="bodyMd" fontWeight="semibold">
-                      {wizardData.targetLocation === 'all' && 'All locations worldwide'}
-                      {wizardData.targetLocation === 'countries' && `${(wizardData.selectedCountries || []).length} countries`}
-                      {wizardData.targetLocation === 'city' && `${(wizardData.selectedCity || []).length} cities`}
-                    </Text>
-                  </div>
-                  <div>
                     <Text variant="bodyXs" color="subdued">Trigger</Text>
                     <Text variant="bodyMd" fontWeight="semibold">
                       {wizardData.trigger === 'timer' ? `After ${wizardData.triggerValue}s` : `At ${wizardData.scrollValue}% scroll`}
+                    </Text>
+                  </div>
+                  <div>
+                    <Text variant="bodyXs" color="subdued">Hesitation Threshold</Text>
+                    <Text variant="bodyMd" fontWeight="semibold">
+                      {wizardData.hesitationThreshold ?? 50}
                     </Text>
                   </div>
                   <div>

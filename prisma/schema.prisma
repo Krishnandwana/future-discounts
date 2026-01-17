@@ -4,8 +4,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("CONVERTBOOST_DATABASE_URL")
-  directUrl = env("CONVERTBOOST_DATABASE_DIRECT_URL")
+  url       = env("FUTUREDISCOUNTS_DATABASE_URL")
+  directUrl = env("FUTUREDISCOUNTS_DATABASE_DIRECT_URL")
 }
 
 model Session {
@@ -38,15 +38,7 @@ model PopupConfiguration {
   valueType                    String?            @default("percentage")
   discountValue                Float?             @default(10)
   expirationDate               Boolean?           @default(false)
-  discountLocation             String?            @default("exclude")
-  selectedCountry              String?            @default("India")
-  selectedCountries            String[]           @default([])
-  selectedCity                 String[]           @default([])
-  selectedState                String[]           @default([])
-  cityOptions                  Json?
-  stateOptions                 Json?
-  locationType                 String?            @default("city")
-  locationRules                String?            @default("certainCountries")
+  hesitationThreshold          Int?               @default(50)
   stickyDiscountBar            String?            @default("yes")
   sidebarWidget                String?            @default("no")
   trigger                      String?            @default("scroll")
