@@ -5,4 +5,5 @@ build/
 .claude/
 coverage/
 *.md
-.cursor/ 
+.cursor/
+storage-credentials.json 
