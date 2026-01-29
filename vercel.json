@@ -1,18 +1,10 @@
 {
   "buildCommand": "npm run build",
   "installCommand": "npm install && npx prisma generate",
-  "framework": null,
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/api/index"
+      "destination": "/api"
     }
-  ],
-  "functions": {
-    "api/index.js": {
-      "runtime": "nodejs20.x",
-      "maxDuration": 30,
-      "memory": 1024
-    }
-  }
+  ]
 }
